@@ -1,6 +1,6 @@
 module github.com/platformod/united
 
-go 1.21.6
+go 1.21.7
 
 require (
 	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.0
