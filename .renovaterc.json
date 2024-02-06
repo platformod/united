@@ -1,5 +1,5 @@
 {
-  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "extends": ["config:recommended"],
   "labels": ["dependencies", "renovatebot"],
   "packageRules": [
     {
@@ -22,7 +22,7 @@
       "matchUpdateTypes": ["minor", "patch"]
     }
   ],
-  "prConcurrentLimit": 2,
+  "prConcurrentLimit": 10,
   "platformAutomerge": false,
   "automergeSchedule": ["every weekend"],
   "separateMinorPatch": true,
