@@ -1,0 +1,30 @@
+{
+  "extends": ["config:recommended", ":disableDependencyDashboard"],
+  "labels": ["dependencies", "renovatebot"],
+  "packageRules": [
+    {
+      "automerge": true,
+      "matchUpdateTypes": ["patch", "pin", "digest", "minor"]
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "reviewers": ["team:modders"]
+    },
+    {
+      "automerge": true,
+      "groupName": "dependencies",
+      "matchManagers": [
+        "terraform",
+        "pre-commit",
+        "dockerfile",
+        "github-actions"
+      ],
+      "matchUpdateTypes": ["minor", "patch"]
+    }
+  ],
+  "prConcurrentLimit": 2,
+  "platformAutomerge": false,
+  "automergeSchedule": ["every weekend"],
+  "separateMinorPatch": true,
+  "timezone": "America/Los_Angeles"
+}
