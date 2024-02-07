@@ -13,7 +13,9 @@ builds:
     goos:
       - linux
       - darwin
-
+    goarch:
+      - amd64
+      - arm64
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of `uname`.
@@ -37,6 +39,7 @@ dockers:
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/platformod/united"
       - "--platform=linux/amd64"
   - id: arm64
     goarch: arm64
@@ -50,6 +53,7 @@ dockers:
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
       - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/platformod/united"
       - "--platform=linux/arm64/v8"
 
 docker_manifests:
