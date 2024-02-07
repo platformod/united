@@ -24,10 +24,61 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
+dockers:
+  - id: amd64
+    goarch: amd64
+    use: buildx
+    image_templates:
+      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
+      - "gcr.io/platformod/united:v{{ .Major }}-amd64"
+      - "gcr.io/platformod/united:latest-amd64"
+    build_flag_templates:
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/amd64"
+  - id: arm64
+    goarch: arm64
+    use: buildx
+    image_templates:
+      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "gcr.io/platformod/united:v{{ .Major }}-arm64"
+      - "gcr.io/platformod/united:latest-arm64"
+    build_flag_templates:
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/arm64/v8"
+
+docker_manifests:
+  - name_template: gcr.io/platformod/united:latest
+    image_templates:
+      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
+  - name_template: gcr.io/platformod/united:v{{ .Major }}
+    image_templates:
+      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
 
 changelog:
+  use: github
+  abbrev: 0
   sort: asc
+  groups:
+    - title: Features
+      regexp: "^feat:"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^(fix|bug):"
+      order: 1
+    - title: Everything else
+      order: 999
+
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
+      - "^docs"
+      - "^test"
+      - "^ci"
+      - "^chore"
