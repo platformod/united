@@ -29,9 +29,9 @@ dockers:
     goarch: amd64
     use: buildx
     image_templates:
-      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
-      - "gcr.io/platformod/united:v{{ .Major }}-amd64"
-      - "gcr.io/platformod/united:latest-amd64"
+      - "ghcr.io/platformod/united:{{ .Tag }}-amd64"
+      - "ghcr.io/platformod/united:v{{ .Major }}-amd64"
+      - "ghcr.io/platformod/united:latest-amd64"
     build_flag_templates:
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
@@ -42,9 +42,9 @@ dockers:
     goarch: arm64
     use: buildx
     image_templates:
-      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
-      - "gcr.io/platformod/united:v{{ .Major }}-arm64"
-      - "gcr.io/platformod/united:latest-arm64"
+      - "ghcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "ghcr.io/platformod/united:v{{ .Major }}-arm64"
+      - "ghcr.io/platformod/united:latest-arm64"
     build_flag_templates:
       - "--label=org.opencontainers.image.created={{.Date}}"
       - "--label=org.opencontainers.image.title={{.ProjectName}}"
@@ -53,14 +53,14 @@ dockers:
       - "--platform=linux/arm64/v8"
 
 docker_manifests:
-  - name_template: gcr.io/platformod/united:latest
+  - name_template: ghcr.io/platformod/united:latest
     image_templates:
-      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
-      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
-  - name_template: gcr.io/platformod/united:v{{ .Major }}
+      - "ghcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "ghcr.io/platformod/united:{{ .Tag }}-amd64"
+  - name_template: ghcr.io/platformod/united:v{{ .Major }}
     image_templates:
-      - "gcr.io/platformod/united:{{ .Tag }}-arm64"
-      - "gcr.io/platformod/united:{{ .Tag }}-amd64"
+      - "ghcr.io/platformod/united:{{ .Tag }}-arm64"
+      - "ghcr.io/platformod/united:{{ .Tag }}-amd64"
 
 changelog:
   use: github
