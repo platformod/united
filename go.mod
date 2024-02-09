@@ -4,7 +4,7 @@ go 1.21.7
 
 require (
 	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.0
-	github.com/aws/aws-sdk-go v1.50.13
+	github.com/aws/aws-sdk-go v1.50.14
 	github.com/aws/aws-sdk-go-v2/config v1.26.6
 	github.com/aws/aws-sdk-go-v2/service/kms v1.27.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.48.1
