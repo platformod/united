@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/aws/amazon-s3-encryption-client-go/v3/client"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/smithy-go"
 	"github.com/bsm/redislock"
 	"github.com/gin-gonic/gin"
