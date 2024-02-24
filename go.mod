@@ -11,7 +11,7 @@ require (
 	github.com/aws/smithy-go v1.20.1
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-gonic/gin v1.9.1
-	github.com/redis/go-redis/v9 v9.5.0
+	github.com/redis/go-redis/v9 v9.5.1
 	github.com/sethvargo/go-envconfig v1.0.0
 )
 
