@@ -3,7 +3,7 @@ module github.com/platformod/united
 go 1.22.2
 
 require (
-	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.0
+	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.1
 	github.com/aws/aws-sdk-go-v2 v1.26.1
 	github.com/aws/aws-sdk-go-v2/config v1.27.11
 	github.com/aws/aws-sdk-go-v2/service/kms v1.30.1
