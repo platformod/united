@@ -12,7 +12,7 @@ require (
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-gonic/gin v1.10.0
 	github.com/redis/go-redis/v9 v9.5.3
-	github.com/sethvargo/go-envconfig v1.0.3
+	github.com/sethvargo/go-envconfig v1.1.0
 )
 
 require (
