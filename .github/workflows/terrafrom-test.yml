@@ -47,7 +47,7 @@ jobs:
       # The default includes pipefile which breaks a few makefile things
       # https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsshell
       - name: Run services
-        shell: bash --noprofile --norc -e {0}
+        shell: bash --noprofile --norc {0}
         run: make run
 
       - name: Run test
