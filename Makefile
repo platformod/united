@@ -1,7 +1,7 @@
 .PHONY: help
 .DEFAULT_GOAL := help
-.SHELLFLAGS = -c
-.SHELL = bash
+.SHELLFLAGS := -c
+.SHELL := bash
 
 run = ~/go/bin/air
 ifdef CI
@@ -22,10 +22,10 @@ devprep: ## Installs all dev tools you need
 
 runtime: ## Run Docker deps
 	docker compose up --quiet-pull -d
-	sleep 3
+	sleep 1
 
 setup-localstack: ## Setup up localstack
-	@echo $(.SHELL) $(.SHELLFLAGS) $$*
+	false || true
 	AWS_PROFILE="localstack" aws s3 ls united-test || aws s3 mb s3://united-test
 	AWS_PROFILE="localstack" aws kms list-aliases | jq '.Aliases[] | select(.AliasName=="alias/united-test")' | grep united-test || aws kms create-alias --alias-name alias/united-test --target-key-id $$(aws kms create-key | jq -r '.KeyMetadata.KeyId') | cat
 
@@ -33,7 +33,6 @@ down: ## Down compose
 	docker compose down
 
 run: build runtime setup-localstack  ## Run united devmode
-	# DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085:/united-test" ~/go/bin/air
 	DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085:/united-test" $(run)
 
 test: ## Run tests in tests/ dir

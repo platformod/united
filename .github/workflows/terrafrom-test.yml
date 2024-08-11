@@ -20,6 +20,15 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: "**/*.sum"
 
+      - name: get terraform-version
+        id: tf_ver
+        run: echo "ver=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
+
+      - name: setup terrafrom
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.tf_ver.outputs.ver }}
+
       - name: Setup aws cli
         run: |
           mkdir ~/.aws
