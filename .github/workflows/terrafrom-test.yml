@@ -1,0 +1,17 @@
+name: terrafrom test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions: read-all
+
+jobs:
+  terraform-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run services
+        run: make run
+      - name: Run test
+        run: make test

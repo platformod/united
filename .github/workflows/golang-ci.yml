@@ -1,4 +1,4 @@
-name: Golang-CI
+name: golangci
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions: read-all
 
 jobs:
 
-  preCommit:
+  golangci:
     name: Run golang-ci
     runs-on: ubuntu-latest
     steps:

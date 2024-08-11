@@ -18,6 +18,8 @@ type Config struct {
 	ValidateAuth bool `env:"VALIDATE_AUTH,default=true"`
 	// URL to POST to, should return 200 for success.  Body is JSON: '{"identity": "USER", "password": "PASS"}'
 	AuthURL string `env:"AUTH_URL,default=http://localhost:8090/api/collections/united/auth-with-password"`
+	//Dev flag to alter some config for localstack
+	Dev bool `env:"DEV,default=false"`
 }
 
 // Shape of the Lock info TF gives us in LOCK and UNLOCK

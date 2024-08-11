@@ -48,9 +48,9 @@ export AUTH_URL="https://inside-api/api/united-states-postage"
 
 ```
 
-## Terrafrom Config
+## Terraform Config
 
-Config is done via the [Terrafrom http backend](https://developer.hashicorp.com/terraform/language/settings/backends/http).  United uses the `/state` path and binds `/state/:group/:name` which you should provide.
+Config is done via the [Terraform http backend](https://developer.hashicorp.com/terraform/language/settings/backends/http).  United uses the `/state` path and binds `/state/:group/:name` which you should provide.
 
 An example is below:
 
@@ -60,12 +60,6 @@ terraform {
     address        = "https://united.my.org/state/my-group/this-state"
     lock_address   = "https://united.my.org/state/my-group/this-state"
     unlock_address = "https://united.my.org/state/my-group/this-state"
-  }
-  required_providers {
-    random = {
-      source = "hashicorp/random"
-      version = "3.6.0"
-    }
   }
 }
 ```
@@ -83,9 +77,9 @@ Note that Atlantis can populate env vars via script, which is the ideal tool to 
 
 ## Runtime Notes
 
-- Protect s3 bucket as with anything.  Data is encrypted vis [AWS S3-CSE](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingClientSideEncryption.html) but care should still be taken to prevent leakage.  Same this with the KMS key.
+- Protect s3 bucket as with anything.  Data is encrypted vis [AWS S3-CSE](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingClientSideEncryption.html) but care should still be taken to prevent leakage.  Same with the KMS key.
 
-- Do network isolation.  This service is meant to be interfaced by terrafrom, not the entire internet. Ideally run this next to Atlantis and only allow network traffic from it.
+- Do network isolation.  This service is meant to be interfaced by terraform, not the entire internet. Ideally run this next to Atlantis and only allow network traffic from it.
 
 - Use the auth validation.  This was designed to auth against [the PocketBase API](https://pocketbase.io/docs/api-records/#auth-with-password) but the format is simple enough to write a shim in front of another source if needed.  The alternative method is basically just a hackaround for testing purposes
 
@@ -96,6 +90,12 @@ Note that Atlantis can populate env vars via script, which is the ideal tool to 
 - Why united?
   - Because it's the United States for Atlantis.
 
+## Developing
+
+- Setup your `~/.aws/config` and `~/.aws/credentials` with a localstack [profile](https://docs.localstack.cloud/user-guide/integrations/aws-cli/#configuring-a-custom-profile)
+- Running `make devprep` will get everything you need installed.
+- Run `make run` to start deps, and run united with hot rebuild using [air](https://github.com/air-verse/air)
+- Run `make test` to run a simple set of tests.  Check the output to make sure things are changing
 
 ## Copyright
 
