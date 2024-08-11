@@ -1,5 +1,6 @@
 .PHONY: help
 .DEFAULT_GOAL := help
+.SHELLFLAGS = -c
 
 run = ~/go/bin/air
 ifdef CI
@@ -19,7 +20,8 @@ devprep: ## Installs all dev tools you need
 	go install github.com/air-verse/air@latest
 
 runtime: ## Run Docker deps
-	docker compose up -d
+	docker compose up --quiet-pull -d
+	sleep 3
 
 setup-localstack: ## Setup up localstack
 	AWS_PROFILE="localstack" aws s3 ls united-test || aws s3 mb s3://united-test
