@@ -20,7 +20,7 @@ jobs:
           go-version-file: 'go.mod'
           cache-dependency-path: "**/*.sum"
 
-      - name: Setup AWS Config
+      - name: Setup aws cli
         run: |
           mkdir ~/.aws
           chmod 700 ~/.aws
@@ -31,6 +31,9 @@ jobs:
           echo "[localstack]" >> ~/.aws/credentials
           echo "aws_access_key_id=test" >> ~/.aws/credentials
           echo "aws_secret_access_key=test" >> ~/.aws/credentials
+          # seems like the action ships with cli v1?
+          sudo snap install aws-cli --classic
+          aws --version
 
       - name: Run services
         run: make run
