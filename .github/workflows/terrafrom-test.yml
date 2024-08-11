@@ -34,12 +34,12 @@ jobs:
           mkdir ~/.aws
           chmod 700 ~/.aws
           echo "[profile localstack]" >> ~/.aws/config
-          echo "region=us-east-1" >> ~/.aws/config
-          echo "output=json" >> ~/.aws/config
+          echo "region = us-east-2" >> ~/.aws/config
+          echo "output = json" >> ~/.aws/config
           echo "endpoint_url = http://localhost:4566" >> ~/.aws/config
           echo "[localstack]" >> ~/.aws/credentials
-          echo "aws_access_key_id=test" >> ~/.aws/credentials
-          echo "aws_secret_access_key=test" >> ~/.aws/credentials
+          echo "aws_access_key_id = test" >> ~/.aws/credentials
+          echo "aws_secret_access_key = test" >> ~/.aws/credentials
           # seems like the action ships with cli v1?
           sudo snap install aws-cli --classic
           aws --version
@@ -48,7 +48,11 @@ jobs:
       # https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsshell
       - name: Run services
         shell: bash --noprofile --norc -x {0}
+        env:
+          AWS_PROFILE: localstack
         run: make run
 
       - name: Run test
+        env:
+          AWS_PROFILE: localstack
         run: make test
