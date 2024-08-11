@@ -1,6 +1,6 @@
 .PHONY: help
 .DEFAULT_GOAL := help
-.SHELLFLAGS = -ec
+.SHELLFLAGS = -c
 .SHELL = bash
 
 run = ~/go/bin/air
@@ -25,7 +25,7 @@ runtime: ## Run Docker deps
 	sleep 3
 
 setup-localstack: ## Setup up localstack
-	@echo $(.SHELL) $(.SHELLFLAGS)
+	@echo $(.SHELL) $(.SHELLFLAGS) $$*
 	AWS_PROFILE="localstack" aws s3 ls united-test || aws s3 mb s3://united-test
 	AWS_PROFILE="localstack" aws kms list-aliases | jq '.Aliases[] | select(.AliasName=="alias/united-test")' | grep united-test || aws kms create-alias --alias-name alias/united-test --target-key-id $$(aws kms create-key | jq -r '.KeyMetadata.KeyId') | cat
 
