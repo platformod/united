@@ -1,6 +1,6 @@
 .PHONY: help
 .DEFAULT_GOAL := help
-.SHELLFLAGS := -cx
+.SHELLFLAGS := -c
 .SHELL := bash
 
 run = ~/go/bin/air
