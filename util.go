@@ -14,14 +14,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func newS3Client(keyArn string) (*client.S3EncryptionClientV3, error) {
+func newS3Client(keyArn string, isDev bool) (*client.S3EncryptionClientV3, error) {
 	ctx := context.Background()
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-2"))
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Fatalf("unable to load SDK config, %v", err)
 	}
 
-	s3Client := s3.NewFromConfig(cfg)
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = isDev
+	})
 	kmsClient := kms.NewFromConfig(cfg)
 	kmsKeyArn := keyArn
 	// kmsKeyArn := "arn:aws:kms:us-east-2:578632298045:key/6c26233f-214e-4475-87f1-48ce0faa8be5"

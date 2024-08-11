@@ -1,0 +1,25 @@
+# If you change this, be sure to update .github/workflows/terraform-test.yml
+services:
+  nginx:
+    image: nginx:1.27
+    ports:
+      - 8085:80
+    volumes:
+      - ./tests/nginx.conf:/etc/nginx/nginx.conf:ro
+  redis:
+    image: redis:7.4-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+  localstack:
+    container_name: "${LOCALSTACK_DOCKER_NAME:-localstack-main}"
+    image: localstack/localstack:3.6
+    ports:
+      - "127.0.0.1:4566:4566"
+      - "127.0.0.1:4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3,kms
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      #- "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"

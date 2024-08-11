@@ -15,7 +15,7 @@ import (
 )
 
 func UnitedSetup() gin.HandlerFunc {
-	s3c, _ := newS3Client(cfg.KeyArn)
+	s3c, _ := newS3Client(cfg.KeyArn, cfg.Dev)
 	rc := newRedisClient(cfg.RedisConn)
 
 	return func(c *gin.Context) {
