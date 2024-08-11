@@ -25,7 +25,6 @@ runtime: ## Run Docker deps
 	sleep 1
 
 setup-localstack: ## Setup up localstack
-	false || true
 	AWS_PROFILE="localstack" aws s3 ls united-test || aws s3 mb s3://united-test
 	AWS_PROFILE="localstack" aws kms list-aliases | jq '.Aliases[] | select(.AliasName=="alias/united-test")' | grep united-test || aws kms create-alias --alias-name alias/united-test --target-key-id $$(aws kms create-key | jq -r '.KeyMetadata.KeyId') | cat
 
