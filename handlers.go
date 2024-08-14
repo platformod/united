@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -40,22 +39,20 @@ func getHandler(c *gin.Context) {
 	// We care about which error here, since no state should 404,
 	// which TF sees as success for new states
 	var apiErr smithy.APIError
-	var oe *smithy.OperationError
 	if errors.As(err, &apiErr) {
 		switch apiErr.(type) {
 		case *s3types.NoSuchKey, *s3types.NotFound:
 			c.JSON(http.StatusNotFound, gin.H{"message": "Not Found"})
 			return
 		default:
+			//nolint:errcheck
+			c.Error(err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Could not retrieve from storage"})
 			return
 		}
-	} else if errors.As(err, &oe) {
-		log.Printf("aws operr during get: %s, operation: %s, error: %v", oe.Service(), oe.Operation(), oe.Unwrap())
-		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Could not retrieve from storage"})
-		return
 	} else if err != nil {
-		log.Printf("unknown error during get: %s", err)
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Could not retrieve from storage"})
 		return
 	}
@@ -84,6 +81,8 @@ func postHandler(c *gin.Context) {
 	if id != "" {
 		lock, err := lc.Obtain(c, lockBase, 5*time.Second, nil)
 		if err == redislock.ErrNotObtained {
+			//nolint:errcheck
+			c.Error(err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Lock failed at inital step"})
 			return
 		}
@@ -92,6 +91,8 @@ func postHandler(c *gin.Context) {
 
 		stored, err := rc.Get(context.Background(), lockBase+"-xreq").Result()
 		if err != nil {
+			//nolint:errcheck
+			c.Error(err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Failed to retrieve lock info"})
 			return
 		}
@@ -112,7 +113,8 @@ func postHandler(c *gin.Context) {
 	})
 
 	if err != nil {
-		fmt.Printf("Error storing state: %s\n", err)
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Failed to store state"})
 	} else {
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
@@ -133,6 +135,8 @@ func deleteHandler(c *gin.Context) {
 	})
 
 	if err != nil {
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Failed to delete state"})
 		return
 	} else {
@@ -158,6 +162,8 @@ func lockHandler(c *gin.Context) {
 	// Get outer mutex for operations on the cross request lock
 	lock, err := lc.Obtain(c, lockBase, 5*time.Second, nil)
 	if err == redislock.ErrNotObtained {
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Lock failed at inital step"})
 		return
 	}
@@ -179,6 +185,8 @@ func lockHandler(c *gin.Context) {
 	reqLockStr, _ := json.Marshal(reqLock)
 	err = rc.Set(context.Background(), lockBase+"-xreq", reqLockStr, 35*time.Minute).Err()
 	if err != nil {
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Lock failed"})
 		return
 	} else {
@@ -203,6 +211,8 @@ func unlockHandler(c *gin.Context) {
 
 	lock, err := lc.Obtain(context.Background(), fmt.Sprintf("%s/%s/%s", prefix, group, name), 5*time.Second, nil)
 	if err == redislock.ErrNotObtained {
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Unlock failed at inital step"})
 		return
 	}
@@ -224,6 +234,8 @@ func unlockHandler(c *gin.Context) {
 
 	err = rc.Del(context.Background(), lockBase+"-xreq").Err()
 	if err != nil {
+		//nolint:errcheck
+		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Unlock failed"})
 	} else {
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
