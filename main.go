@@ -6,9 +6,12 @@ import (
 	"context"
 	"log"
 
-	"github.com/sethvargo/go-envconfig"
-
+	healthcheck "github.com/RaMin0/gin-health-check"
+	"github.com/gin-contrib/logger"
+	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
+	"github.com/sethvargo/go-envconfig"
 )
 
 func main() {
@@ -16,11 +19,23 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//gin.SetMode(gin.ReleaseMode)
+	if cfg.Dev {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
-	r := gin.Default()
+	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
 
+	r.Use(gin.Recovery())
+	r.Use(healthcheck.Default())
+	r.Use(requestid.New())
+	r.Use(logger.SetLogger(
+		logger.WithLogger(func(_ *gin.Context, l zerolog.Logger) zerolog.Logger {
+			return l.Output(gin.DefaultWriter).With().Logger()
+		}),
+	))
 	r.Use(UnitedSetup())
 
 	r.GET("/ping", func(c *gin.Context) {
