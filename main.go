@@ -10,6 +10,7 @@ import (
 	"github.com/gin-contrib/logger"
 	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
 	"github.com/sethvargo/go-envconfig"
 )
 
@@ -30,7 +31,11 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(healthcheck.Default())
 	r.Use(requestid.New())
-	r.Use(logger.SetLogger())
+	r.Use(logger.SetLogger(
+		logger.WithLogger(func(_ *gin.Context, l zerolog.Logger) zerolog.Logger {
+			return l.Output(gin.DefaultWriter).With().Logger()
+		}),
+	))
 	r.Use(UnitedSetup())
 
 	r.GET("/ping", func(c *gin.Context) {
