@@ -4,7 +4,7 @@ go 1.22.2
 
 require (
 	github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01
-	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.1
+	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.2
 	github.com/aws/aws-sdk-go-v2 v1.30.5
 	github.com/aws/aws-sdk-go-v2/config v1.27.33
 	github.com/aws/aws-sdk-go-v2/service/kms v1.35.7
