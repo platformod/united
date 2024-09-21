@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.27.33
 	github.com/aws/aws-sdk-go-v2/service/kms v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.61.2
-	github.com/aws/smithy-go v1.20.4
+	github.com/aws/smithy-go v1.21.0
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-contrib/logger v1.1.2
 	github.com/gin-contrib/requestid v1.0.3
