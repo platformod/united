@@ -6,9 +6,9 @@ require (
 	github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01
 	github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.2
 	github.com/aws/aws-sdk-go-v2 v1.32.2
-	github.com/aws/aws-sdk-go-v2/config v1.27.43
+	github.com/aws/aws-sdk-go-v2/config v1.28.0
 	github.com/aws/aws-sdk-go-v2/service/kms v1.37.2
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.65.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.0
 	github.com/aws/smithy-go v1.22.0
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-contrib/logger v1.1.2
