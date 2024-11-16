@@ -4,6 +4,8 @@ github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.1 h1:XboA4eeeOgKPN18QUEGEK
 github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.1/go.mod h1:olnwkBTbWjaJCaGOHohvJu98q40GiJZuDHLXj751mII=
 github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.2 h1:v9e2CHBFZtmHv3vUnejOwKnI3rbKbKYRtPMzxpKH+wU=
 github.com/aws/amazon-s3-encryption-client-go/v3 v3.0.2/go.mod h1:olnwkBTbWjaJCaGOHohvJu98q40GiJZuDHLXj751mII=
+github.com/aws/amazon-s3-encryption-client-go/v3 v3.1.0 h1:P4dOTmTkEb8Dj/LuAoA4bqRZZrDq4DqZQI88vdMaj18=
+github.com/aws/amazon-s3-encryption-client-go/v3 v3.1.0/go.mod h1:olnwkBTbWjaJCaGOHohvJu98q40GiJZuDHLXj751mII=
 github.com/aws/aws-sdk-go-v2 v1.30.3 h1:jUeBtG0Ih+ZIFH0F4UkmL9w3cSpaMv9tYYDbzILP8dY=
 github.com/aws/aws-sdk-go-v2 v1.30.3/go.mod h1:nIQjQVp5sfpQcTc9mPSr1B0PaWK5ByX9MOoDadSN4lc=
 github.com/aws/aws-sdk-go-v2 v1.30.4 h1:frhcagrVNrzmT95RJImMHgabt99vkXGslubDaDagTk8=
