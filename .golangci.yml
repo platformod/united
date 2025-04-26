@@ -1,13 +1,24 @@
+version: "2"
 run:
   allow-parallel-runners: true
-  timeout: 5m
 linters:
   enable:
     - gosec
-    # Add golangci-lint defaults here too, to be explicit
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
