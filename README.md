@@ -99,7 +99,7 @@ Note that Atlantis can populate env vars via script, which is the ideal tool to 
 
 ## Copyright
 
-Copyright (C) 2024 Platform OnDemand, Inc - All Rights Reserved
+Copyright (C) 2025 Platform OnDemand, Inc - All Rights Reserved
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
