@@ -1,6 +1,6 @@
 module github.com/platformod/united
 
-go 1.22.2
+go 1.24.2
 
 require (
 	github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01

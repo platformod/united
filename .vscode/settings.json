@@ -7,5 +7,6 @@
         "tpkeeper",
         "xerr",
         "xreq"
-    ]
+    ],
+    "makefile.configureOnOpen": false
 }
