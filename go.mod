@@ -13,7 +13,7 @@ require (
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-contrib/logger v1.2.5
 	github.com/gin-contrib/requestid v1.0.5
-	github.com/gin-gonic/gin v1.10.0
+	github.com/gin-gonic/gin v1.10.1
 	github.com/redis/go-redis/v9 v9.8.0
 	github.com/rs/zerolog v1.34.0
 	github.com/sethvargo/go-envconfig v1.3.0
