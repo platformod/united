@@ -15,7 +15,6 @@ linters:
           list-mode: lax
           allow:
             - $gostd
-          deny:
   exclusions:
     generated: lax
     presets:
