@@ -31,8 +31,10 @@ func UnitedBasicAuth() gin.HandlerFunc {
 		if hdr == "" {
 			c.Header("WWW-Authenticate", "Authorization Required")
 			c.AbortWithStatus(http.StatusUnauthorized)
+
 			return
 		}
+
 		decodedAuth, _ := base64.StdEncoding.DecodeString(strings.Split(hdr, " ")[1])
 		auth := strings.Split(string(decodedAuth), ":")
 
@@ -48,25 +50,30 @@ func UnitedBasicAuth() gin.HandlerFunc {
 				Identity string `json:"identity"`
 				Password string `json:"password"`
 			}
+
 			body, err := json.Marshal(AuthBody{Identity: auth[0], Password: auth[1]})
 			if err != nil {
 				c.Header("WWW-Authenticate", "Authorization Required")
 				c.AbortWithStatus(http.StatusUnauthorized)
+
 				return
 			}
 
 			res, err := http.Post(cfg.AuthURL, "application/json", bytes.NewReader(body))
-			if err != nil || res.StatusCode != 200 {
+			if err != nil || res.StatusCode != http.StatusOK {
 				c.Header("WWW-Authenticate", "Authorization Required")
 				c.AbortWithStatus(http.StatusUnauthorized)
+
 				return
 			}
+
 			c.Set("prefix", fmt.Sprintf("%s-%s", cfg.BucketPrefix, auth[0]))
 		} else {
 			group := c.Param("group")
 			key := fmt.Sprintf("%s-%s-%s", cfg.BucketPrefix, auth[1], group)
 			c.Set("prefix", fmt.Sprintf("%x", sha256.Sum256([]byte(key))))
 		}
-		c.Set("user", auth[0])
+
+		c.Set("filePath", fmt.Sprintf("%s/%s/%s", c.MustGet("prefix"), c.Param("group"), c.Param("name")))
 	}
 }
