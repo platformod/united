@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 
 	healthcheck "github.com/RaMin0/gin-health-check"
 	"github.com/gin-contrib/logger"
@@ -39,7 +40,7 @@ func main() {
 	r.Use(UnitedSetup())
 
 	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
 		})
 	})

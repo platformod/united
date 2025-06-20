@@ -2,8 +2,20 @@ version: "2"
 run:
   allow-parallel-runners: true
 linters:
+  default: fast
   enable:
     - gosec
+  settings:
+    mnd:
+      ignored-functions:
+        - 'time\.*'
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          allow:
+            - $gostd
+          deny:
   exclusions:
     generated: lax
     presets:

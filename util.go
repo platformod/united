@@ -16,6 +16,7 @@ import (
 
 func newS3Client(keyArn string, isDev bool) (*client.S3EncryptionClientV3, error) {
 	ctx := context.Background()
+
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Fatalf("unable to load SDK config, %v", err)
@@ -26,13 +27,17 @@ func newS3Client(keyArn string, isDev bool) (*client.S3EncryptionClientV3, error
 	})
 	kmsClient := kms.NewFromConfig(cfg)
 	kmsKeyArn := keyArn
-	// kmsKeyArn := "arn:aws:kms:us-east-2:578632298045:key/6c26233f-214e-4475-87f1-48ce0faa8be5"
 
-	cmm, err := materials.NewCryptographicMaterialsManager(materials.NewKmsKeyring(kmsClient, kmsKeyArn, func(options *materials.KeyringOptions) {
-		options.EnableLegacyWrappingAlgorithms = false
-	}))
+	cmm, err := materials.NewCryptographicMaterialsManager(
+		materials.NewKmsKeyring(
+			kmsClient,
+			kmsKeyArn,
+			func(options *materials.KeyringOptions) {
+				options.EnableLegacyWrappingAlgorithms = false
+			}),
+	)
 	if err != nil {
-		log.Fatalf("error while creating new CMM")
+		log.Fatal("error while creating new CMM")
 	}
 
 	return client.New(s3Client, cmm)
@@ -45,5 +50,6 @@ func newRedisClient(conn string) *redis.Client {
 	}
 
 	client := redis.NewClient(opts)
+
 	return client
 }
