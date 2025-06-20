@@ -29,13 +29,13 @@ var lockTime = 5
 var xreqLockTTL = 35
 
 func getHandler(c *gin.Context) {
-	filepath := c.MustGet("filepath").(string)
+	filePath := c.MustGet("filePath").(string)
 	s3c := c.MustGet("s3c").(*client.S3EncryptionClientV3)
 
 	// nrh: As far as I can tell, there's no locking for GET requests?
 	o, err := s3c.GetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: aws.String(cfg.Bucket),
-		Key:    aws.String(filepath),
+		Key:    aws.String(filePath),
 	})
 
 	// We care about which error here, since no state should 404,
@@ -72,12 +72,12 @@ func postHandler(c *gin.Context) {
 
 	var storedLock LockInfo
 
-	filepath := c.MustGet("filepath").(string)
+	filePath := c.MustGet("filePath").(string)
 	s3c := c.MustGet("s3c").(*client.S3EncryptionClientV3)
 	rc := c.MustGet("rc").(*redis.Client)
 	lc := redislock.New(rc)
 
-	lockBase := filepath
+	lockBase := filePath
 
 	// lock if someone passes us an id,
 	// otherwise assume that someone used -lock=false and go nuts
@@ -119,7 +119,7 @@ func postHandler(c *gin.Context) {
 	body, _ := io.ReadAll(c.Request.Body)
 	_, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
-		Key:         aws.String(filepath),
+		Key:         aws.String(filePath),
 		Body:        bytes.NewReader(body),
 		ContentType: aws.String("application/json"),
 	})
@@ -135,12 +135,12 @@ func postHandler(c *gin.Context) {
 
 // Unsure where TF calls this...
 func deleteHandler(c *gin.Context) {
-	filepath := c.MustGet("filepath").(string)
+	filePath := c.MustGet("filePath").(string)
 	s3c := c.MustGet("s3c").(*client.S3EncryptionClientV3)
 
 	_, err := s3c.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 		Bucket: aws.String(cfg.Bucket),
-		Key:    aws.String(filepath),
+		Key:    aws.String(filePath),
 	})
 
 	if err != nil {
@@ -163,11 +163,11 @@ func lockHandler(c *gin.Context) {
 
 	_ = c.BindJSON(&reqLock)
 
-	filepath := c.MustGet("filepath").(string)
+	filePath := c.MustGet("filePath").(string)
 	rc := c.MustGet("rc").(*redis.Client)
 	lc := redislock.New(rc)
 
-	lockBase := filepath
+	lockBase := filePath
 
 	// Get outer mutex for operations on the cross request lock
 	lock, err := lc.Obtain(c, lockBase, time.Duration(lockTime)*time.Second, nil)
@@ -222,13 +222,13 @@ func unlockHandler(c *gin.Context) {
 
 	_ = c.BindJSON(&reqLock)
 
-	filepath := c.MustGet("filepath").(string)
+	filePath := c.MustGet("filePath").(string)
 	rc := c.MustGet("rc").(*redis.Client)
 	lc := redislock.New(rc)
 
-	lockBase := filepath
+	lockBase := filePath
 
-	lock, err := lc.Obtain(context.Background(), filepath, time.Duration(lockTime)*time.Second, nil)
+	lock, err := lc.Obtain(context.Background(), filePath, time.Duration(lockTime)*time.Second, nil)
 	if err == redislock.ErrNotObtained {
 		//nolint:errcheck
 		c.Error(err)

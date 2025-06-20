@@ -21,7 +21,7 @@ devprep: ## Installs all dev tools you need
 	go install github.com/air-verse/air@latest
 
 runtime: ## Run Docker deps
-	docker compose up --quiet-pull -d
+	docker-compose up --quiet-pull -d
 	sleep 2
 
 setup-localstack: ## Setup up localstack
