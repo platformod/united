@@ -45,15 +45,13 @@ func getHandler(c *gin.Context) {
 		switch apiErr.(type) {
 		case *s3types.NoSuchKey, *s3types.NotFound:
 			c.JSON(http.StatusNotFound, gin.H{"message": "Not Found"})
-
-			return
 		default:
 			//nolint:errcheck
 			c.Error(err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Could not retrieve from storage"})
-
-			return
 		}
+
+		return
 	} else if err != nil {
 		//nolint:errcheck
 		c.Error(err)
@@ -128,9 +126,11 @@ func postHandler(c *gin.Context) {
 		//nolint:errcheck
 		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Failed to store state"})
-	} else {
-		c.JSON(http.StatusOK, gin.H{"message": "ok"})
+
+		return
 	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 // Unsure where TF calls this...
@@ -147,12 +147,8 @@ func deleteHandler(c *gin.Context) {
 		//nolint:errcheck
 		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Failed to delete state"})
-
-		return
 	} else {
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
-
-		return
 	}
 }
 
@@ -206,12 +202,8 @@ func lockHandler(c *gin.Context) {
 		//nolint:errcheck
 		c.Error(err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Lock failed"})
-
-		return
 	} else {
 		c.JSON(http.StatusOK, reqLock.ID)
-
-		return
 	}
 }
 
