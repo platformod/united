@@ -11,4 +11,6 @@ test:
 	terraform destroy -auto-approve
 	terraform state pull
 
-	curl -qv -fsSL --user ${TF_HTTP_USERNAME}:${TF_HTTP_PASSWORD} -X DELETE http://localhost:8080/state/my-peoples/meNOT
+	curl -qv -fsSL --user ${TF_HTTP_USERNAME}:${TF_HTTP_PASSWORD} -X DELETE http://localhost:8080/state/my-peoples/me
+	@echo
+	PAGER=cat aws s3api list-objects --bucket united-test

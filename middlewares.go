@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/go-playground/validator/v10"
 )
 
 func UnitedSetup() gin.HandlerFunc {
@@ -25,17 +28,53 @@ func UnitedSetup() gin.HandlerFunc {
 	}
 }
 
+func callAuthURL(user string, pass string) (bool, error) {
+	type AuthBody struct {
+		Identity string `json:"identity" validate:"required,alphanumunicode"`
+		Password string `json:"password" validate:"required,alphanumunicode"`
+	}
+
+	payload := AuthBody{Identity: user, Password: pass}
+	validate := validator.New(validator.WithRequiredStructEnabled())
+
+	err := validate.Struct(payload)
+	if err != nil {
+		return false, err
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := http.Post(cfg.AuthURL, "application/json", bytes.NewReader(body))
+	if err != nil || res.StatusCode != http.StatusOK {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func UnitedBasicAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		realm := `Basic realm="Authorization Required", charset="UTF-8"`
 		hdr := c.GetHeader("Authorization")
+
 		if hdr == "" {
-			c.Header("WWW-Authenticate", "Authorization Required")
+			c.Header("WWW-Authenticate", realm)
 			c.AbortWithStatus(http.StatusUnauthorized)
 
 			return
 		}
 
-		decodedAuth, _ := base64.StdEncoding.DecodeString(strings.Split(hdr, " ")[1])
+		decodedAuth, err := base64.StdEncoding.DecodeString(strings.Split(hdr, " ")[1])
+		if err != nil {
+			c.Header("WWW-Authenticate", realm)
+			c.AbortWithStatus(http.StatusUnauthorized)
+
+			return
+		}
+
 		auth := strings.Split(string(decodedAuth), ":")
 
 		// ============= WARNING: TRICKERY AHEAD =============
@@ -46,34 +85,28 @@ func UnitedBasicAuth() gin.HandlerFunc {
 		//   but it is not secure and should only be used in trustworthy or non prod environments
 		//   NOTE THAT IF YOU CHANGE THE PASSWORD OR BUCKET PREFIX YOUR STATE GOES TO A NEW PLACE AND YOU LOOSE THE OLD ONE
 		if cfg.ValidateAuth {
-			type AuthBody struct {
-				Identity string `json:"identity"`
-				Password string `json:"password"`
-			}
-
-			body, err := json.Marshal(AuthBody{Identity: auth[0], Password: auth[1]})
-			if err != nil {
-				c.Header("WWW-Authenticate", "Authorization Required")
+			validAuth, err := callAuthURL(auth[0], auth[1])
+			if err != nil || !validAuth {
+				c.Error(err.(validator.ValidationErrors))
+				c.Header("WWW-Authenticate", realm)
 				c.AbortWithStatus(http.StatusUnauthorized)
 
 				return
 			}
 
-			res, err := http.Post(cfg.AuthURL, "application/json", bytes.NewReader(body))
-			if err != nil || res.StatusCode != http.StatusOK {
-				c.Header("WWW-Authenticate", "Authorization Required")
-				c.AbortWithStatus(http.StatusUnauthorized)
-
-				return
-			}
-
-			c.Set("prefix", fmt.Sprintf("%s-%s", cfg.BucketPrefix, auth[0]))
+			c.Set("prefix", fmt.Sprintf("%s-%s", cfg.BucketPrefix, path.Clean(auth[0])))
 		} else {
 			group := c.Param("group")
-			key := fmt.Sprintf("%s-%s-%s", cfg.BucketPrefix, auth[1], group)
+			key := fmt.Sprintf("%s-%s-%s", cfg.BucketPrefix, path.Clean(auth[1]), path.Clean(group))
 			c.Set("prefix", fmt.Sprintf("%x", sha256.Sum256([]byte(key))))
 		}
-
-		c.Set("filePath", fmt.Sprintf("%s/%s/%s", c.MustGet("prefix"), c.Param("group"), c.Param("name")))
+		// lastly, set path for the key in the bucket now
+		c.Set("filePath",
+			fmt.Sprintf("%s/%s/%s",
+				c.MustGet("prefix"),
+				path.Clean(c.Param("group")),
+				path.Clean(c.Param("name")),
+			),
+		)
 	}
 }
