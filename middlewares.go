@@ -76,6 +76,7 @@ func UnitedBasicAuth() gin.HandlerFunc {
 		}
 
 		auth := strings.Split(string(decodedAuth), ":")
+		c.Set("user", path.Clean(auth[0]))
 
 		// ============= WARNING: TRICKERY AHEAD =============
 		// If ValidateAuth is true, we'll try to pass though auth via HTTP with the given creds

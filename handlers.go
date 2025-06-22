@@ -120,6 +120,7 @@ func postHandler(c *gin.Context) {
 		Key:         aws.String(filePath),
 		Body:        bytes.NewReader(body),
 		ContentType: aws.String("application/json"),
+		Metadata:    map[string]string{"x-united-user": c.MustGet("user").(string)},
 	})
 
 	if err != nil {
