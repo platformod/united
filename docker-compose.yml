@@ -1,7 +1,7 @@
 # If you change this, be sure to update .github/workflows/terraform-test.yml
 services:
   nginx:
-    image: nginx:1.28
+    image: nginx:1.29
     ports:
       - 8085:80
     volumes:
