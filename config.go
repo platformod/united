@@ -4,8 +4,8 @@ package main
 
 var cfg Config
 
-// Gin also needs PORT, defaults to 8080.
 type Config struct {
+	// Gin also needs PORT, defaults to 8080.
 	// S3 Bucket to store into.
 	Bucket string `env:"BUCKET,required"`
 	// Key prefix for bucket.  When ValidateAuth is false, we use this value as a salt.
@@ -22,7 +22,7 @@ type Config struct {
 	Dev bool `env:"DEV,default=false"`
 }
 
-// Shape of the Lock info TF gives us in LOCK and UNLOCK.
+// LockInfo: Shape of the Lock info TF gives us in LOCK and UNLOCK.
 type LockInfo struct {
 	// "Created": "2024-02-05T20:04:43.120857Z",
 	Created string `json:"Created"`

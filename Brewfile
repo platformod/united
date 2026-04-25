@@ -5,6 +5,6 @@ tap "localstack/tap"
 ###
 
 brew "golang"
-brew "localstack-cli"
+brew "localstack"
 brew "pre-commit"
 brew "tfenv"

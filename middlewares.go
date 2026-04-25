@@ -42,7 +42,7 @@ func callAuthURL(user string, pass string) (bool, error) {
 		return false, err
 	}
 
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(payload) //nolint:gosec
 	if err != nil {
 		return false, err
 	}
