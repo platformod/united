@@ -12,7 +12,7 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/bsm/redislock v0.9.4
 	github.com/gin-contrib/logger v1.2.7
-	github.com/gin-contrib/requestid v1.0.5
+	github.com/gin-contrib/requestid v1.0.6
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/redis/go-redis/v9 v9.14.1
