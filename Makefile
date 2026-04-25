@@ -32,7 +32,7 @@ down: ## Down compose
 	docker compose down
 
 run: build runtime setup-localstack  ## Run united devmode
-	DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085:/united-test" $(run)
+	DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
 
 test: ## Run tests in tests/ dir
 	$(MAKE) -C tests

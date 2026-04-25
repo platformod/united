@@ -10,7 +10,7 @@ services:
     image: redis:8.2-alpine
     restart: always
     ports:
-      - '6379:6379'
+      - "6379:6379"
   localstack:
     container_name: "${LOCALSTACK_DOCKER_NAME:-localstack-main}"
     image: localstack/localstack:4.8
@@ -21,5 +21,5 @@ services:
       - SERVICES=s3,kms
       - DEBUG=${DEBUG:-0}
     volumes:
-      #- "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
+      #- "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
