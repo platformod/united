@@ -1,5 +1,5 @@
 {
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "labels": ["dependencies", "renovatebot"],
   "packageRules": [
     {
@@ -23,8 +23,11 @@
     }
   ],
   "prConcurrentLimit": 10,
-  "platformAutomerge": false,
+  "platformAutomerge": true,
   "automergeSchedule": ["every weekend"],
   "separateMinorPatch": true,
-  "timezone": "America/Los_Angeles"
+  "timezone": "America/Los_Angeles",
+  "minimumReleaseAge": "3 days",
+  "prCreation": "not-pending",
+  "internalChecksFilter": "strict"
 }
