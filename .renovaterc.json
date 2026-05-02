@@ -28,6 +28,7 @@
   "separateMinorPatch": true,
   "timezone": "America/Los_Angeles",
   "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
   "prCreation": "not-pending",
   "internalChecksFilter": "strict"
 }
