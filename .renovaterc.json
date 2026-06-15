@@ -1,5 +1,5 @@
 {
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "extends": ["config:best-practices", "helpers:pinGitHubActionDigests"],
   "labels": ["dependencies", "renovatebot"],
   "packageRules": [
     {
@@ -26,9 +26,5 @@
   "platformAutomerge": true,
   "automergeSchedule": ["every weekend"],
   "separateMinorPatch": true,
-  "timezone": "America/Los_Angeles",
-  "minimumReleaseAge": "3 days",
-  "minimumReleaseAgeBehaviour": "timestamp-optional",
-  "prCreation": "not-pending",
-  "internalChecksFilter": "strict"
+  "timezone": "America/Los_Angeles"
 }
