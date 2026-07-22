@@ -7,8 +7,8 @@ require (
 	github.com/aws/amazon-s3-encryption-client-go/v3 v3.2.0
 	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.31
-	github.com/aws/aws-sdk-go-v2/service/kms v1.54.1
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.2
+	github.com/aws/aws-sdk-go-v2/service/kms v1.55.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/smithy-go v1.27.4
 	github.com/bsm/redislock v0.10.0
 	github.com/gin-contrib/logger v1.2.7
@@ -29,9 +29,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.32 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.23 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.31 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.32 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.5.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.0 // indirect
