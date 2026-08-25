@@ -1,5 +1,5 @@
 {
-  "extends": ["config:best-practices", "helpers:pinGitHubActionDigests"],
+  "extends": ["config:best-practices"],
   "labels": ["dependencies", "renovatebot"],
   "packageRules": [
     {
@@ -22,9 +22,10 @@
       "matchUpdateTypes": ["minor", "patch"]
     }
   ],
-  "prConcurrentLimit": 10,
-  "platformAutomerge": true,
   "automergeSchedule": ["every weekend"],
+  "platformAutomerge": true,
+  "postUpdateOptions": ["gomod-tidy"],
+  "prConcurrentLimit": 10,
   "separateMinorPatch": true,
   "timezone": "America/Los_Angeles"
 }
