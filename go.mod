@@ -7,7 +7,7 @@ require (
 	github.com/aws/amazon-s3-encryption-client-go/v3 v3.2.1
 	github.com/aws/aws-sdk-go-v2 v1.43.8
 	github.com/aws/aws-sdk-go-v2/config v1.32.39
-	github.com/aws/aws-sdk-go-v2/service/kms v1.55.7
+	github.com/aws/aws-sdk-go-v2/service/kms v1.55.8
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.4
 	github.com/aws/smithy-go v1.27.10
 	github.com/bsm/redislock v0.10.0
