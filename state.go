@@ -458,11 +458,13 @@ func requestLockInfo(e *core.RequestEvent) (LockInfo, error) {
 		info.ID = e.Request.URL.Query().Get("ID")
 	} else if err := json.Unmarshal(body, &info); err != nil {
 		var lockID string
-		if stringErr := json.Unmarshal(body, &lockID); stringErr != nil {
+		if stringErr := json.Unmarshal(body, &lockID); stringErr == nil {
+			info.ID = lockID
+		} else if !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
+			info.ID = strings.TrimSpace(string(body))
+		} else {
 			return LockInfo{}, err
 		}
-
-		info.ID = lockID
 	}
 
 	if strings.TrimSpace(info.ID) == "" {

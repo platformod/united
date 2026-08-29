@@ -30,4 +30,7 @@ jobs:
           terraform_version: ${{ steps.tf_ver.outputs.ver }}
 
       - name: Run Terraform integration test
+        env:
+          TF_HTTP_USERNAME: terraform
+          TF_HTTP_PASSWORD: integration-test-password
         run: make test
