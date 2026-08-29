@@ -1,9 +1,5 @@
 terraform {
-  backend "http" {
-    address        = "http://localhost:8080/state/my-peoples/me"
-    lock_address   = "http://localhost:8080/state/my-peoples/me"
-    unlock_address = "http://localhost:8080/state/my-peoples/me"
-  }
+  backend "http" {}
   required_providers {
     random = {
       source = "hashicorp/random"

@@ -1,4 +1,4 @@
-name: terrafrom test
+name: terraform test
 
 on:
   pull_request:
@@ -14,42 +14,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: setup go
+      - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: 'go.mod'
+          go-version-file: go.mod
           cache-dependency-path: "**/*.sum"
 
-      - name: get terraform-version
+      - name: Get Terraform version
         id: tf_ver
         run: echo "ver=$(cat .terraform-version)" >> "$GITHUB_OUTPUT"
 
-      - name: setup terrafrom
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9 # v4
         with:
           terraform_version: ${{ steps.tf_ver.outputs.ver }}
 
-      - name: Setup aws cli
-        run: |
-          mkdir ~/.aws
-          chmod 700 ~/.aws
-          echo "[profile localstack]" >> ~/.aws/config
-          echo "region = us-east-2" >> ~/.aws/config
-          echo "output = json" >> ~/.aws/config
-          echo "endpoint_url = http://localhost:4566" >> ~/.aws/config
-          echo "[localstack]" >> ~/.aws/credentials
-          echo "aws_access_key_id = test" >> ~/.aws/credentials
-          echo "aws_secret_access_key = test" >> ~/.aws/credentials
-          # seems like the action ships with cli v1?
-          sudo snap install aws-cli --classic
-          aws --version
-
-      - name: Run services
-        env:
-          AWS_PROFILE: localstack
-        run: make run
-
-      - name: Run test
-        env:
-          AWS_PROFILE: localstack
+      - name: Run Terraform integration test
         run: make test

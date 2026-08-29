@@ -1,16 +1,21 @@
-.EXPORT_ALL_VARIABLES:
-TF_HTTP_USERNAME?=foo
-TF_HTTP_PASSWORD?=f00f00f00
-AWS_PROFILE?=localstack
+.DEFAULT_GOAL := test
+.SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
 
-test:
-	terraform init
-	terraform apply -auto-approve
-	terraform apply -var changer=bar -auto-approve
-	terraform state pull
-	terraform destroy -auto-approve
-	terraform state pull
+UNITED_BIN ?= ../dist/united
+UNITED_TEST_PORT ?= 18080
+GROUP_SLUG ?= integration
+STATE_NAME ?= terraform
+TF_HTTP_USERNAME ?= terraform
+TF_HTTP_PASSWORD ?= integration-test-password
 
-	curl -qv -fsSL --user ${TF_HTTP_USERNAME}:${TF_HTTP_PASSWORD} -X DELETE http://localhost:8080/state/my-peoples/me
-	@echo
-	PAGER=cat aws s3api list-objects --bucket united-test
+.PHONY: test
+
+test: $(UNITED_BIN)
+	@test -z "$${AWS_PROFILE:-}" || { echo "AWS_PROFILE is not supported by the PocketBase integration harness" >&2; exit 1; }
+	@test -z "$${AWS_ACCESS_KEY_ID:-}" || { echo "AWS_ACCESS_KEY_ID is not supported by the PocketBase integration harness" >&2; exit 1; }
+	@test -z "$${AWS_SECRET_ACCESS_KEY:-}" || { echo "AWS_SECRET_ACCESS_KEY is not supported by the PocketBase integration harness" >&2; exit 1; }
+	@UNITED_BIN="$(UNITED_BIN)" UNITED_TEST_PORT="$(UNITED_TEST_PORT)" GROUP_SLUG="$(GROUP_SLUG)" STATE_NAME="$(STATE_NAME)" TF_HTTP_USERNAME="$(TF_HTTP_USERNAME)" TF_HTTP_PASSWORD="$(TF_HTTP_PASSWORD)" ./run.sh
+
+$(UNITED_BIN): ../*.go
+	$(MAKE) -C .. build

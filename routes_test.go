@@ -73,7 +73,7 @@ func TestUnlockAndDeleteHonorOwnershipAndExpiry(t *testing.T) {
 	wrongUnlock := unlock(t, handler, group, "network", LockInfo{ID: "second"})
 	require.Equal(t, http.StatusBadRequest, wrongUnlock.Code)
 	require.JSONEq(t, `{"ID":"first"}`, wrongUnlock.Body.String())
-	matchingUnlock := unlock(t, handler, group, "network", LockInfo{ID: "first"})
+	matchingUnlock := request(t, handler, "UNLOCK", stateURL(group, "network"), []byte(`"first"`), group.GetString("username"), "correct horse")
 	require.Equal(t, http.StatusOK, matchingUnlock.Code)
 	require.JSONEq(t, `{"message":"ok"}`, matchingUnlock.Body.String())
 	state = findRecord(t, app, "states", state.Id)

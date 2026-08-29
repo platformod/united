@@ -336,6 +336,7 @@ func unlockState(e *core.RequestEvent, group *core.Record) error {
 		return e.JSON(http.StatusBadRequest, map[string]string{"ID": activeLockInfo.ID})
 	}
 
+	log.Printf("unlock state failed: %v", err)
 	return stateUnavailable(e)
 }
 
@@ -447,15 +448,21 @@ func findUndeletedState(app core.App, groupID, name string) (*core.Record, error
 }
 
 func requestLockInfo(e *core.RequestEvent) (LockInfo, error) {
-	var info LockInfo
-
-	decoder := json.NewDecoder(e.Request.Body)
-	if err := decoder.Decode(&info); err != nil {
+	body, err := io.ReadAll(e.Request.Body)
+	if err != nil {
 		return LockInfo{}, err
 	}
 
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return LockInfo{}, errors.New("unexpected trailing lock payload")
+	var info LockInfo
+	if len(strings.TrimSpace(string(body))) == 0 {
+		info.ID = e.Request.URL.Query().Get("ID")
+	} else if err := json.Unmarshal(body, &info); err != nil {
+		var lockID string
+		if stringErr := json.Unmarshal(body, &lockID); stringErr != nil {
+			return LockInfo{}, err
+		}
+
+		info.ID = lockID
 	}
 
 	if strings.TrimSpace(info.ID) == "" {
