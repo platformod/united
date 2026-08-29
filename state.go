@@ -257,6 +257,214 @@ func stateUnavailable(e *core.RequestEvent) error {
 	return e.Error(http.StatusServiceUnavailable, "State unavailable.", nil)
 }
 
+func lockState(e *core.RequestEvent, group *core.Record) error {
+	info, err := requestLockInfo(e)
+	if err != nil {
+		return e.BadRequestError("Invalid lock info.", nil)
+	}
+
+	err = e.App.RunInTransaction(func(txApp core.App) error {
+		return lockStateMutation(txApp, group.Id, e.Request.PathValue("name"), info)
+	})
+	if err == nil {
+		return e.JSON(http.StatusOK, map[string]string{"ID": info.ID})
+	}
+
+	if errors.Is(err, errStateMissing) {
+		return e.NotFoundError("State not found.", nil)
+	}
+
+	if errors.Is(err, errLockConflict) {
+		return e.Error(http.StatusLocked, "Lock conflict.", nil)
+	}
+
+	return stateUnavailable(e)
+}
+
+func lockStateMutation(txApp core.App, groupID, name string, info LockInfo) error {
+	state, err := findUndeletedState(txApp, groupID, name)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+
+	active, expired, _, err := activeLock(state, now)
+	if err != nil {
+		return err
+	}
+
+	if active {
+		return errLockConflict
+	}
+
+	if expired {
+		if _, err := clearExpiredLock(txApp, state, now); err != nil {
+			return err
+		}
+	}
+
+	setLock(state, info, now)
+
+	return txApp.Save(state)
+}
+
+func unlockState(e *core.RequestEvent, group *core.Record) error {
+	info, err := requestLockInfo(e)
+	if err != nil {
+		return e.BadRequestError("Invalid lock info.", nil)
+	}
+
+	var activeLockInfo LockInfo
+
+	lockMissing := false
+	err = e.App.RunInTransaction(func(txApp core.App) error {
+		activeLockInfo, lockMissing, err = unlockStateMutation(txApp, group.Id, e.Request.PathValue("name"), info)
+
+		return err
+	})
+
+	if err == nil && lockMissing {
+		return e.JSON(http.StatusOK, map[string]string{"message": "Lock Not Found. Expired. Probably."})
+	}
+
+	if err == nil {
+		return e.JSON(http.StatusOK, map[string]string{"message": "ok"})
+	}
+
+	if errors.Is(err, errUnlockOwnership) {
+		return e.JSON(http.StatusBadRequest, map[string]string{"ID": activeLockInfo.ID})
+	}
+
+	return stateUnavailable(e)
+}
+
+func unlockStateMutation(txApp core.App, groupID, name string, info LockInfo) (LockInfo, bool, error) {
+	state, err := findUndeletedState(txApp, groupID, name)
+	if errors.Is(err, errStateMissing) {
+		return LockInfo{}, true, nil
+	}
+
+	if err != nil {
+		return LockInfo{}, false, err
+	}
+
+	now := time.Now().UTC()
+
+	active, expired, storedInfo, err := activeLock(state, now)
+	if err != nil {
+		return LockInfo{}, false, err
+	}
+
+	if expired {
+		_, err := clearExpiredLock(txApp, state, now)
+
+		return LockInfo{}, true, err
+	}
+
+	if !active {
+		return LockInfo{}, true, nil
+	}
+
+	if storedInfo.ID != info.ID {
+		return storedInfo, false, errUnlockOwnership
+	}
+
+	clearLock(state)
+
+	return LockInfo{}, false, txApp.Save(state)
+}
+
+func deleteState(e *core.RequestEvent, group *core.Record) error {
+	lockID := e.Request.URL.Query().Get("ID")
+
+	err := e.App.RunInTransaction(func(txApp core.App) error {
+		return deleteStateMutation(txApp, group.Id, e.Request.PathValue("name"), lockID)
+	})
+	if err == nil {
+		return e.NoContent(http.StatusOK)
+	}
+
+	if errors.Is(err, errLockConflict) {
+		return e.Error(http.StatusLocked, "Lock conflict.", nil)
+	}
+
+	return stateUnavailable(e)
+}
+
+func deleteStateMutation(txApp core.App, groupID, name, lockID string) error {
+	state, err := findUndeletedState(txApp, groupID, name)
+	if errors.Is(err, errStateMissing) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+
+	active, expired, info, err := activeLock(state, now)
+	if err != nil {
+		return err
+	}
+
+	if active && lockID != info.ID {
+		return errLockConflict
+	}
+
+	if expired {
+		if _, err := clearExpiredLock(txApp, state, now); err != nil {
+			return err
+		}
+	}
+
+	deletedAt, err := types.ParseDateTime(now)
+	if err != nil {
+		return err
+	}
+
+	state.Set("deletedAt", deletedAt)
+
+	return txApp.Save(state)
+}
+
+func findUndeletedState(app core.App, groupID, name string) (*core.Record, error) {
+	state, err := findState(app, groupID, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errStateMissing
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !state.GetDateTime("deletedAt").IsZero() {
+		return nil, errStateMissing
+	}
+
+	return state, nil
+}
+
+func requestLockInfo(e *core.RequestEvent) (LockInfo, error) {
+	var info LockInfo
+
+	decoder := json.NewDecoder(e.Request.Body)
+	if err := decoder.Decode(&info); err != nil {
+		return LockInfo{}, err
+	}
+
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return LockInfo{}, errors.New("unexpected trailing lock payload")
+	}
+
+	if strings.TrimSpace(info.ID) == "" {
+		return LockInfo{}, errors.New("empty lock ID")
+	}
+
+	return info, nil
+}
+
 func activeLock(state *core.Record, now time.Time) (active bool, expired bool, info LockInfo, err error) {
 	lockID := state.GetString("lockID")
 	lockInfo := strings.TrimSpace(state.GetString("lockInfo"))

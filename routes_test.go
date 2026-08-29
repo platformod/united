@@ -4,11 +4,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,122 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLockDoesNotCreateMissingStateAndConflictsReturn423(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+
+	missing := lock(t, handler, group, "network", LockInfo{ID: "first"})
+	require.Equal(t, http.StatusNotFound, missing.Code)
+
+	createState(t, app, group, "network")
+	first := lock(t, handler, group, "network", LockInfo{ID: "first"})
+	require.Equal(t, http.StatusOK, first.Code)
+	require.JSONEq(t, `{"ID":"first"}`, first.Body.String())
+	require.Equal(t, http.StatusLocked, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
+	require.Equal(t, http.StatusLocked, lock(t, handler, group, "network", LockInfo{ID: "second"}).Code)
+
+	expired := createState(t, app, group, "expired")
+	setLock(expired, LockInfo{ID: "expired"}, time.Now().UTC().Add(-lockLease))
+	require.NoError(t, app.Save(expired))
+	require.Equal(t, http.StatusOK, lock(t, handler, group, "expired", LockInfo{ID: "replacement"}).Code)
+	expired = findRecord(t, app, "states", expired.Id)
+	require.Equal(t, "replacement", expired.GetString("lockID"))
+
+	deleted := createState(t, app, group, "deleted")
+	deleted.Set("deletedAt", types.NowDateTime())
+	require.NoError(t, app.Save(deleted))
+	require.Equal(t, http.StatusNotFound, lock(t, handler, group, "deleted", LockInfo{ID: "first"}).Code)
+}
+
+func TestLockRejectsMalformedOrEmptyLockInfo(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	createState(t, app, group, "network")
+
+	for _, body := range [][]byte{[]byte(`{`), []byte(`{"ID":""}`)} {
+		response := request(t, handler, "LOCK", stateURL(group, "network"), body, group.GetString("username"), "correct horse")
+		require.Equal(t, http.StatusBadRequest, response.Code)
+	}
+}
+
+func TestUnlockAndDeleteHonorOwnershipAndExpiry(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	state := createState(t, app, group, "network")
+
+	missing := unlock(t, handler, group, "missing", LockInfo{ID: "first"})
+	require.Equal(t, http.StatusOK, missing.Code)
+	require.JSONEq(t, `{"message":"Lock Not Found. Expired. Probably."}`, missing.Body.String())
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "missing"), nil, group.GetString("username"), "correct horse").Code)
+
+	require.Equal(t, http.StatusOK, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
+	wrongUnlock := unlock(t, handler, group, "network", LockInfo{ID: "second"})
+	require.Equal(t, http.StatusBadRequest, wrongUnlock.Code)
+	require.JSONEq(t, `{"ID":"first"}`, wrongUnlock.Body.String())
+	matchingUnlock := unlock(t, handler, group, "network", LockInfo{ID: "first"})
+	require.Equal(t, http.StatusOK, matchingUnlock.Code)
+	require.JSONEq(t, `{"message":"ok"}`, matchingUnlock.Body.String())
+	state = findRecord(t, app, "states", state.Id)
+	require.Empty(t, state.GetString("lockID"))
+	require.Equal(t, "null", state.GetString("lockInfo"))
+	require.True(t, state.GetDateTime("lockExpiresAt").IsZero())
+
+	require.Equal(t, http.StatusOK, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
+	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=second", nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=first", nil, group.GetString("username"), "correct horse").Code)
+
+	state = findRecord(t, app, "states", state.Id)
+	require.False(t, state.GetDateTime("deletedAt").IsZero())
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusGone, request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), "correct horse").Code)
+
+	expired := createState(t, app, group, "expired")
+	setLock(expired, LockInfo{ID: "expired-lock"}, time.Now().UTC().Add(-lockLease))
+	require.NoError(t, app.Save(expired))
+	expiredUnlock := unlock(t, handler, group, "expired", LockInfo{ID: "expired-lock"})
+	require.Equal(t, http.StatusOK, expiredUnlock.Code)
+	require.JSONEq(t, `{"message":"Lock Not Found. Expired. Probably."}`, expiredUnlock.Body.String())
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "expired"), nil, group.GetString("username"), "correct horse").Code)
+}
+
+func TestConcurrentLockAttempts(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	createState(t, app, group, "network")
+
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	var ready sync.WaitGroup
+	var start sync.WaitGroup
+	ready.Add(2)
+	start.Add(1)
+
+	for _, id := range []string{"first", "second"} {
+		go func() {
+			ready.Done()
+			start.Wait()
+			responses <- lock(t, handler, group, "network", LockInfo{ID: id})
+		}()
+	}
+
+	ready.Wait()
+	start.Done()
+	first, second := <-responses, <-responses
+	require.ElementsMatch(t, []int{http.StatusOK, http.StatusLocked}, []int{first.Code, second.Code})
+}
+
+func lock(t *testing.T, handler http.Handler, group *core.Record, name string, info LockInfo) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(info)
+	require.NoError(t, err)
+
+	return request(t, handler, "LOCK", stateURL(group, name), body, group.GetString("username"), "correct horse")
+}
+
+func unlock(t *testing.T, handler http.Handler, group *core.Record, name string, info LockInfo) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(info)
+	require.NoError(t, err)
+
+	return request(t, handler, "UNLOCK", stateURL(group, name), body, group.GetString("username"), "correct horse")
+}
 
 func TestFirstPostCreatesEncryptedVersionAndGetReturnsOriginalBody(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
