@@ -30,3 +30,7 @@ go.work
 
 # goreleaser out dir
 dist/
+
+# PocketBase runtime and integration-test data
+pb_data/
+tests/tmp/

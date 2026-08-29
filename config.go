@@ -2,24 +2,23 @@
 
 package main
 
-var cfg Config
+import (
+	"encoding/base64"
+	"errors"
+	"os"
+)
 
 type Config struct {
-	// Gin also needs PORT, defaults to 8080.
-	// S3 Bucket to store into.
-	Bucket string `env:"BUCKET,required"`
-	// Key prefix for bucket.  When ValidateAuth is false, we use this value as a salt.
-	BucketPrefix string `env:"BUCKET_PREFIX,default=united"`
-	// KMS Key Arn to use for S3-CSE.
-	KeyArn string `env:"KEY_ARN,required"`
-	// Redis connection string for locking.
-	RedisConn string `env:"REDIS_CONN,default=redis://localhost:6379"`
-	// When true, will POST creds to AuthUrl to try to auth.
-	ValidateAuth bool `env:"VALIDATE_AUTH,default=true"`
-	// URL to POST to, should return 200 for success.  Body is JSON: '{"identity": "USER", "password": "PASS"}'
-	AuthURL string `env:"AUTH_URL,default=http://localhost:8090/api/collections/united/auth-with-password"`
-	//Dev flag to alter some config for localstack.
-	Dev bool `env:"DEV,default=false"`
+	StateMasterKey []byte
+}
+
+func LoadConfig() (Config, error) {
+	key, err := base64.StdEncoding.DecodeString(os.Getenv("UNITED_STATE_MASTER_KEY"))
+	if err != nil || len(key) != 32 {
+		return Config{}, errors.New("UNITED_STATE_MASTER_KEY must be a base64-encoded 32-byte key")
+	}
+
+	return Config{StateMasterKey: key}, nil
 }
 
 // LockInfo: Shape of the Lock info TF gives us in LOCK and UNLOCK.
