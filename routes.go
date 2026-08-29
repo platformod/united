@@ -9,15 +9,19 @@ import (
 )
 
 func registerRoutes(app core.App, cfg Config) {
+	app.Store().Set(stateMasterKeyStoreKey, cfg.StateMasterKey)
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		se.Router.GET("/ping", func(e *core.RequestEvent) error {
 			return e.JSON(http.StatusOK, map[string]string{"message": "pong"})
 		})
 
-		stateRoute := requireGroupBasicAuth(stateRouteNotFound)
-		se.Router.GET("/state/{group}/{name}", stateRoute)
-		se.Router.POST("/state/{group}/{name}", requireGroupBasicAuth(postStateRouteNotFound))
+		se.Router.GET("/state/{group}/{name}", requireGroupBasicAuth(getState))
+		se.Router.POST("/state/{group}/{name}", requireGroupBasicAuth(func(e *core.RequestEvent, group *core.Record) error {
+			return postState(e, group, cfg.StateMasterKey)
+		}))
 		se.Router.DELETE("/state/{group}/{name}", requireGroupBasicAuth(deleteStateRouteNotFound))
+		stateRoute := requireGroupBasicAuth(stateRouteNotFound)
 		se.Router.Any("LOCK /state/{group}/{name}", stateRoute)
 		se.Router.Any("UNLOCK /state/{group}/{name}", stateRoute)
 
