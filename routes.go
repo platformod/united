@@ -27,8 +27,6 @@ func registerRoutes(app core.App, cfg Config) {
 
 		return se.Next()
 	})
-
-	_ = cfg
 }
 
 func stateRouteNotFound(e *core.RequestEvent, _ *core.Record) error {

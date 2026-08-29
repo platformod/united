@@ -243,7 +243,7 @@ func readStatefile(app core.App, statefile *core.Record) ([]byte, error) {
 	}
 	defer fsys.Close()
 
-	file, err := fsys.GetFile(statefile.BaseFilesPath() + "/" + statefile.GetString("file"))
+	file, err := fsys.GetReader(statefile.BaseFilesPath() + "/" + statefile.GetString("file"))
 	if err != nil {
 		return nil, err
 	}
