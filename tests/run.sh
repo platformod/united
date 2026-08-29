@@ -4,12 +4,11 @@
 set -euo pipefail
 
 united_bin=${UNITED_BIN:?UNITED_BIN must be set}
-port=$(python3 -c 'import socket; socket_ = socket.socket(); socket_.bind(("127.0.0.1", 0)); print(socket_.getsockname()[1]); socket_.close()')
 group_slug=${GROUP_SLUG:?GROUP_SLUG must be set}
 state_name=${STATE_NAME:?STATE_NAME must be set}
-
-: "${TF_HTTP_USERNAME:?TF_HTTP_USERNAME must be set}"
-: "${TF_HTTP_PASSWORD:?TF_HTTP_PASSWORD must be set}"
+TF_HTTP_USERNAME="terraform-$RANDOM-$RANDOM"
+TF_HTTP_PASSWORD=$(openssl rand -base64 24)
+export TF_HTTP_USERNAME TF_HTTP_PASSWORD
 
 data_dir=$(mktemp -d "${TMPDIR:-/tmp}/united-pocketbase-test.XXXXXX")
 server_pid=""
@@ -24,23 +23,32 @@ cleanup() {
 trap cleanup EXIT
 
 start_server() {
-	UNITED_STATE_MASTER_KEY="$UNITED_STATE_MASTER_KEY" "$united_bin" serve --dir="$data_dir" --http="127.0.0.1:$port" >"$data_dir/server.log" 2>&1 &
-	server_pid=$!
+	for _ in $(seq 1 10); do
+		port=$((20000 + RANDOM % 30000))
+		UNITED_STATE_MASTER_KEY="$UNITED_STATE_MASTER_KEY" "$united_bin" serve --dir="$data_dir" --http="127.0.0.1:$port" >"$data_dir/server.log" 2>&1 &
+		server_pid=$!
 
-	for _ in $(seq 1 30); do
-		if ! kill -0 "$server_pid" 2>/dev/null; then
-			cat "$data_dir/server.log" >&2
-			echo "PocketBase-backed United server exited before becoming ready" >&2
-			exit 1
+		for _ in $(seq 1 30); do
+			if ! kill -0 "$server_pid" 2>/dev/null; then
+				wait "$server_pid" 2>/dev/null || true
+				server_pid=""
+				break
+			fi
+			if curl --fail --silent --show-error "http://127.0.0.1:$port/ping" >/dev/null; then
+				return
+			fi
+			sleep 1
+		done
+
+		if [[ -n "$server_pid" ]]; then
+			kill "$server_pid" 2>/dev/null || true
+			wait "$server_pid" 2>/dev/null || true
+			server_pid=""
 		fi
-		if curl --fail --silent --show-error "http://127.0.0.1:$port/ping" >/dev/null; then
-			return
-		fi
-		sleep 1
 	done
 
 	cat "$data_dir/server.log" >&2
-	echo "PocketBase-backed United server did not become ready" >&2
+	echo "PocketBase-backed United server did not become ready after 10 attempts" >&2
 	exit 1
 }
 
@@ -56,11 +64,10 @@ inspect_state() {
 
 export UNITED_STATE_MASTER_KEY
 UNITED_STATE_MASTER_KEY=$(openssl rand -base64 32)
+start_server
 export TF_HTTP_ADDRESS="http://127.0.0.1:$port/state/$group_slug/$state_name"
 export TF_HTTP_LOCK_ADDRESS="$TF_HTTP_ADDRESS"
 export TF_HTTP_UNLOCK_ADDRESS="$TF_HTTP_ADDRESS"
-
-start_server
 "$(dirname "$0")/provision.sh" "$united_bin" "$data_dir" "owner@example.test" "$group_slug" "$TF_HTTP_USERNAME" "$TF_HTTP_PASSWORD"
 terraform init -reconfigure
 terraform apply -lock=false -auto-approve

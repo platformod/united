@@ -39,3 +39,15 @@ Run with `TF_HTTP_USERNAME=terraform TF_HTTP_PASSWORD=integration-test-password`
 - `go test ./...` — passed.
 - `make build` — passed.
 - `make test` — passed twice consecutively. The two runs used distinct dynamically selected loopback ports and completed Terraform init, two applies, state pull, destroy, PocketBase inspection, lock contention, direct unlock, delete, and restart persistence checks.
+
+## Fix round 2
+
+- Removed the Terraform HTTP credential environment values from the CI workflow and all harness configuration. `tests/run.sh` now creates a unique username and cryptographically random password for each run, and passes them only to the provisioning command and Terraform subprocesses.
+- Replaced bind-then-close port selection with a bounded start retry. Each candidate port is retained only when the spawned United process remains alive and responds to `/ping`; a failed bind terminates that child before trying a new port. This prevents readiness from accepting another process that won the port race.
+- The accepted `terraform force-unlock` TODO remains unchanged.
+
+### Fix-round validation
+
+- `make build` — passed.
+- `make test` — passed twice consecutively without supplying Terraform credentials; each run generated its own runtime-only credential and used fresh server-start retry ports.
+- `go test ./...` — passed.
