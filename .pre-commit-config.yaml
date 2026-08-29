@@ -35,6 +35,6 @@ repos:
         args: ["--config",".commitlintrc.yaml"]
 
   - repo: https://github.com/golangci/golangci-lint
-    rev: v2.1.6
+    rev: v2.13.2
     hooks:
       - id: golangci-lint
