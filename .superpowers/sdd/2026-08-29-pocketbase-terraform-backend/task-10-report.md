@@ -60,3 +60,12 @@ Run with `TF_HTTP_USERNAME=<runtime-generated-username> TF_HTTP_PASSWORD=<runtim
 ### Fix-round validation
 
 - Tracked-file forbidden-password grep — no matches.
+
+## Fix round 4
+
+- Redacted the legacy literal Terraform HTTP password in `README.md` with `<runtime-generated-password>`. This is the narrow documentation change required to complete Task 10's no-committed-password requirement; broader README modernization remains Task 11 scope.
+- The accepted `terraform force-unlock` TODO remains unchanged.
+
+### Fix-round validation
+
+- Tracked-file Terraform-password grep — no matches.

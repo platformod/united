@@ -68,7 +68,7 @@ Then run by setting the username and password via env vars:
 
 ```bash
 export TF_HTTP_USERNAME="daryl"
-export TF_HTTP_PASSWORD="Ih0p3Th1$w0rKz"
+export TF_HTTP_PASSWORD="<runtime-generated-password>"
 terraform init
 terraform plan
 ```
