@@ -24,6 +24,33 @@ func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
 	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
 }
 
+func TestCrossGroupCredentialsCannotAccessAnotherGroupURL(t *testing.T) {
+	app, platform, handler := newHTTPTestAppWithGroup(t)
+	operations := createGroup(t, app, findRecord(t, app, "users", platform.GetString("owner")), "operations", "operations-tf", "correct horse")
+
+	response := request(t, handler, http.MethodGet, stateURL(platform, "network"), nil, operations.GetString("username"), "correct horse")
+
+	require.Equal(t, http.StatusUnauthorized, response.Code)
+	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
+}
+
+func TestStateAccessSurvivesGroupDisplayAndUserNameChanges(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	body := []byte(`{"version":4,"serial":1}`)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+
+	group = findRecord(t, app, "groups", group.Id)
+	group.Set("displayName", "Platform Engineering")
+	require.NoError(t, app.Save(group))
+	owner := findRecord(t, app, "users", group.GetString("owner"))
+	owner.Set("name", "Renamed Owner")
+	require.NoError(t, app.Save(owner))
+
+	response := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, body, response.Body.Bytes())
+}
+
 func TestEveryStateRouteRequiresBasicAuth(t *testing.T) {
 	_, group, handler := newHTTPTestAppWithGroup(t)
 
@@ -55,6 +82,12 @@ func newHTTPTestAppWithGroup(t *testing.T) (*pocketbase.PocketBase, *core.Record
 	owner := createUser(t, app)
 	group := createGroup(t, app, owner, "platform", "terraform", "correct horse")
 
+	return app, group, newTestHandler(t, app)
+}
+
+func newTestHandler(t *testing.T, app *pocketbase.PocketBase) http.Handler {
+	t.Helper()
+
 	router, err := apis.NewRouter(app)
 	require.NoError(t, err)
 	serveEvent := &core.ServeEvent{App: app, Router: router}
@@ -65,7 +98,7 @@ func newHTTPTestAppWithGroup(t *testing.T) (*pocketbase.PocketBase, *core.Record
 	handler, err := router.BuildMux()
 	require.NoError(t, err)
 
-	return app, group, handler
+	return handler
 }
 
 func request(t *testing.T, handler http.Handler, method, target string, body []byte, username, password string) *httptest.ResponseRecorder {

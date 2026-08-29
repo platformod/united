@@ -46,13 +46,17 @@ func TestLockDoesNotCreateMissingStateAndConflictsReturn423(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, lock(t, handler, group, "deleted", LockInfo{ID: "first"}).Code)
 }
 
-func TestLockRejectsMalformedOrEmptyLockInfo(t *testing.T) {
+func TestMalformedLockAndUnlockPayloadsReturn400(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 	createState(t, app, group, "network")
 
-	for _, body := range [][]byte{[]byte(`{`), []byte(`{"ID":""}`)} {
-		response := request(t, handler, "LOCK", stateURL(group, "network"), body, group.GetString("username"), "correct horse")
-		require.Equal(t, http.StatusBadRequest, response.Code)
+	for _, method := range []string{"LOCK", "UNLOCK"} {
+		t.Run(method, func(t *testing.T) {
+			for _, body := range [][]byte{[]byte(`{`), []byte(`{"ID":""}`), []byte(`{"ID":"   "}`)} {
+				response := request(t, handler, method, stateURL(group, "network"), body, group.GetString("username"), "correct horse")
+				require.Equal(t, http.StatusBadRequest, response.Code)
+			}
+		})
 	}
 }
 
@@ -236,11 +240,14 @@ func TestPostRejectsDeletedStateAndInvalidLockIDUsage(t *testing.T) {
 	})
 }
 
-func TestPostClearsExpiredLockBeforeWriting(t *testing.T) {
+func TestExpiredLockRejectsStaleIDAndAllowsNoIDPost(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 	state := createState(t, app, group, "network")
 	setLock(state, LockInfo{ID: "expired-lock"}, time.Now().Add(-lockLease))
 	require.NoError(t, app.Save(state))
+
+	stale := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=expired-lock", []byte(`{"version":4}`), group.GetString("username"), "correct horse")
+	require.Equal(t, http.StatusBadRequest, stale.Code)
 
 	response := request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), "correct horse")
 	require.Equal(t, http.StatusOK, response.Code)
@@ -251,7 +258,7 @@ func TestPostClearsExpiredLockBeforeWriting(t *testing.T) {
 	require.True(t, state.GetDateTime("lockExpiresAt").IsZero())
 }
 
-func TestGetReturnsGenericServiceUnavailableForUnreadableStateVersions(t *testing.T) {
+func TestTamperedStateVersionsReturn503(t *testing.T) {
 	tests := map[string]func(t *testing.T, app core.App, group, statefile *core.Record){
 		"missing file": func(t *testing.T, app core.App, _ *core.Record, statefile *core.Record) {
 			fsys, err := app.NewFilesystem()
@@ -299,6 +306,53 @@ func TestGetReturnsGenericServiceUnavailableForUnreadableStateVersions(t *testin
 			requireServiceUnavailable(t, response)
 		})
 	}
+}
+
+func TestPasswordRotationRejectsOldPasswordAndDecryptsOldVersion(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	body := []byte(`{"version":4,"serial":1}`)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+
+	group = findRecord(t, app, "groups", group.Id)
+	group.SetPassword("new correct horse")
+	require.NoError(t, app.Save(group))
+
+	oldPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	require.Equal(t, http.StatusUnauthorized, oldPassword.Code)
+
+	newPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "new correct horse")
+	require.Equal(t, http.StatusOK, newPassword.Code)
+	require.Equal(t, body, newPassword.Body.Bytes())
+}
+
+func TestRestartReadsCurrentVersionFromExistingDataDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{StateMasterKey: make([]byte, 32)}
+	app := newApp(cfg, dataDir)
+	require.NoError(t, app.Bootstrap())
+	require.NoError(t, app.RunAllMigrations())
+	firstRunning := true
+	t.Cleanup(func() {
+		if firstRunning {
+			require.NoError(t, app.ResetBootstrapState())
+		}
+	})
+
+	group := createGroup(t, app, createUser(t, app), "platform", "terraform", "correct horse")
+	body := []byte(`{"version":4,"serial":1}`)
+	require.Equal(t, http.StatusOK, request(t, newTestHandler(t, app), http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+	require.NoError(t, app.ResetBootstrapState())
+	firstRunning = false
+
+	restarted := newApp(cfg, dataDir)
+	require.NoError(t, restarted.Bootstrap())
+	t.Cleanup(func() {
+		require.NoError(t, restarted.ResetBootstrapState())
+	})
+
+	response := request(t, newTestHandler(t, restarted), http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, body, response.Body.Bytes())
 }
 
 func TestFailedPostPreservesCurrentVersion(t *testing.T) {
