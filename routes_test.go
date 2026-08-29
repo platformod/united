@@ -402,10 +402,14 @@ func storedStatefileBytes(t *testing.T, app core.App, statefile *core.Record) []
 func requireServiceUnavailable(t *testing.T, response *httptest.ResponseRecorder) {
 	t.Helper()
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
-	require.Contains(t, response.Body.String(), "State unavailable.")
-	require.NotContains(t, response.Body.String(), "invalid")
-	require.NotContains(t, response.Body.String(), "integrity")
-	require.NotContains(t, response.Body.String(), "encrypted")
+
+	var responseBody map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &responseBody))
+	require.Equal(t, map[string]any{
+		"status":  float64(http.StatusServiceUnavailable),
+		"message": "State unavailable.",
+		"data":    map[string]any{},
+	}, responseBody)
 }
 
 func stateURL(group *core.Record, name string) string {
