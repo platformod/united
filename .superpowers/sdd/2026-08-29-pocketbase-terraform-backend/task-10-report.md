@@ -34,7 +34,7 @@ The editor sandbox blocks loopback TCP binds. The integration harness was run un
 
 ### Fix-round validation
 
-Run with `TF_HTTP_USERNAME=terraform TF_HTTP_PASSWORD=integration-test-password` in a loopback-permitted environment:
+Run with `TF_HTTP_USERNAME=<runtime-generated-username> TF_HTTP_PASSWORD=<runtime-generated-password>` in a loopback-permitted environment:
 
 - `go test ./...` — passed.
 - `make build` — passed.
@@ -51,3 +51,12 @@ Run with `TF_HTTP_USERNAME=terraform TF_HTTP_PASSWORD=integration-test-password`
 - `make build` — passed.
 - `make test` — passed twice consecutively without supplying Terraform credentials; each run generated its own runtime-only credential and used fresh server-start retry ports.
 - `go test ./...` — passed.
+
+## Fix round 3
+
+- Redacted the historical literal Terraform password from this report. Historical commands now use `<runtime-generated-password>` to reflect the harness behavior without committing a password value.
+- The accepted `terraform force-unlock` TODO remains unchanged.
+
+### Fix-round validation
+
+- Tracked-file forbidden-password grep — no matches.
