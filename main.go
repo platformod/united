@@ -19,6 +19,7 @@ func newApp(cfg Config, dataDir string) *pocketbase.PocketBase {
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir})
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{})
 	registerHooks(app, cfg)
+
 	return app
 }
 

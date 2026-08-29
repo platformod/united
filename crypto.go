@@ -56,6 +56,7 @@ func EncryptState(plaintext, groupKey []byte, contentType string) (StateDocument
 	if len(groupKey) != aes256KeyLength {
 		return StateDocument{}, errors.New("invalid group key")
 	}
+
 	if contentType == "" {
 		contentType = defaultContentType
 	}
@@ -66,6 +67,7 @@ func EncryptState(plaintext, groupKey []byte, contentType string) (StateDocument
 	}
 
 	digest := sha256.Sum256(plaintext)
+
 	return StateDocument{
 		Ciphertext:    []byte(ciphertext),
 		ContentLength: int64(len(plaintext)),
@@ -86,9 +88,11 @@ func DecryptState(document StateDocument, groupKey []byte) ([]byte, error) {
 
 	digest := sha256.Sum256(plaintext)
 	expectedDigest, err := hex.DecodeString(document.SHA256)
+
 	if err != nil || len(expectedDigest) != len(digest) || subtle.ConstantTimeCompare(digest[:], expectedDigest) != 1 {
 		return nil, errors.New("state integrity check failed")
 	}
+
 	if int64(len(plaintext)) != document.ContentLength {
 		return nil, errors.New("state length check failed")
 	}
@@ -98,5 +102,6 @@ func DecryptState(document StateDocument, groupKey []byte) ([]byte, error) {
 
 func validCiphertext(ciphertext string) bool {
 	decoded, err := base64.StdEncoding.DecodeString(ciphertext)
+
 	return err == nil && len(decoded) >= minimumGCMCiphertextLength
 }

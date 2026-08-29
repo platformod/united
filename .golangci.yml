@@ -26,6 +26,8 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      - migrations/.*
+      - .*_test\.go$
 formatters:
   exclusions:
     generated: lax
