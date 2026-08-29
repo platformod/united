@@ -24,6 +24,19 @@ func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
 	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
 }
 
+func TestEveryStateRouteRequiresBasicAuth(t *testing.T) {
+	_, group, handler := newHTTPTestAppWithGroup(t)
+
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete, "LOCK", "UNLOCK"} {
+		t.Run(method, func(t *testing.T) {
+			response := request(t, handler, method, "/state/"+group.GetString("slug")+"/network", nil, "wrong", "password")
+
+			require.Equal(t, http.StatusUnauthorized, response.Code)
+			require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
+		})
+	}
+}
+
 func TestGroupCredentialsCannotUsePocketBaseAuthEndpoint(t *testing.T) {
 	_, group, handler := newHTTPTestAppWithGroup(t)
 

@@ -16,8 +16,8 @@ func registerRoutes(app core.App, cfg Config) {
 
 		stateRoute := requireGroupBasicAuth(stateRouteNotFound)
 		se.Router.GET("/state/{group}/{name}", stateRoute)
-		se.Router.POST("/state/{group}/{name}", stateRoute)
-		se.Router.DELETE("/state/{group}/{name}", stateRoute)
+		se.Router.POST("/state/{group}/{name}", requireGroupBasicAuth(postStateRouteNotFound))
+		se.Router.DELETE("/state/{group}/{name}", requireGroupBasicAuth(deleteStateRouteNotFound))
 		se.Router.Any("LOCK /state/{group}/{name}", stateRoute)
 		se.Router.Any("UNLOCK /state/{group}/{name}", stateRoute)
 
@@ -28,5 +28,17 @@ func registerRoutes(app core.App, cfg Config) {
 }
 
 func stateRouteNotFound(e *core.RequestEvent, _ *core.Record) error {
+	return e.NotFoundError("State not found.", nil)
+}
+
+func postStateRouteNotFound(e *core.RequestEvent, group *core.Record) error {
+	return stateRouteNotFoundWithLockID(e, group, e.Request.URL.Query().Get("ID"))
+}
+
+func deleteStateRouteNotFound(e *core.RequestEvent, group *core.Record) error {
+	return stateRouteNotFoundWithLockID(e, group, e.Request.URL.Query().Get("ID"))
+}
+
+func stateRouteNotFoundWithLockID(e *core.RequestEvent, _ *core.Record, _ string) error {
 	return e.NotFoundError("State not found.", nil)
 }
