@@ -282,9 +282,20 @@ func lockState(e *core.RequestEvent, group *core.Record) error {
 }
 
 func lockStateMutation(txApp core.App, groupID, name string, info LockInfo) error {
-	state, err := findUndeletedState(txApp, groupID, name)
-	if err != nil {
+	state, err := findState(txApp, groupID, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		states, collectionErr := txApp.FindCollectionByNameOrId("states")
+		if collectionErr != nil {
+			return collectionErr
+		}
+
+		state = core.NewRecord(states)
+		state.Set("group", groupID)
+		state.Set("name", name)
+	} else if err != nil {
 		return err
+	} else if !state.GetDateTime("deletedAt").IsZero() {
+		return errStateMissing
 	}
 
 	now := time.Now().UTC()

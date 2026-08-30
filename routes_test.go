@@ -20,16 +20,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLockDoesNotCreateMissingStateAndConflictsReturn423(t *testing.T) {
+func TestLockCreatesMissingStateAndConflictsReturn423(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 
-	missing := lock(t, handler, group, "network", LockInfo{ID: "first"})
-	require.Equal(t, http.StatusNotFound, missing.Code)
-
-	createState(t, app, group, "network")
 	first := lock(t, handler, group, "network", LockInfo{ID: "first"})
 	require.Equal(t, http.StatusOK, first.Code)
 	require.JSONEq(t, `{"ID":"first"}`, first.Body.String())
+	state, err := findState(app, group.Id, "network")
+	require.NoError(t, err)
+	require.Equal(t, "first", state.GetString("lockID"))
 	require.Equal(t, http.StatusLocked, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
 	require.Equal(t, http.StatusLocked, lock(t, handler, group, "network", LockInfo{ID: "second"}).Code)
 
