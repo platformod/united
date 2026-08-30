@@ -13,17 +13,24 @@ United has no external object-store, key-management, distributed-lock, cloud CLI
 
 ## Run United
 
-Generate a new key once using a secure secret-management workflow, store it outside the repository, and provide the same key on every start. Losing or changing the key makes existing encrypted state versions unreadable.
+Provision a key **once** in your secret-management system, store it outside the repository, and inject that same persistent value on every start. For example, generate the initial value only during secret provisioning, not in a startup command:
 
 ```bash
-UNITED_STATE_MASTER_KEY="$(openssl rand -base64 32)" ./dist/united serve --dir=./pb_data
+openssl rand -base64 32
+```
+
+Configure the resulting value as `UNITED_STATE_MASTER_KEY` in your deployment's secret mechanism, then start United without generating or replacing it:
+
+```bash
+./dist/united serve --dir=./pb_data
 ```
 
 `pb_data` contains PocketBase's SQLite data and the protected encrypted state files. Mount it on durable storage, restrict filesystem access to the service account, and back it up together as one unit. A backup without the corresponding master key cannot restore encrypted state, so protect and retain the key in an appropriate secret manager.
 
-The container image starts United with `serve --dir=/pb_data` and declares `/pb_data` as a volume. Mount durable, protected storage there and provide `UNITED_STATE_MASTER_KEY` through your deployment's secret mechanism:
+The container image starts United with `serve --dir=/pb_data` and declares `/pb_data` as a volume. Mount durable, protected storage there and inject the **previously provisioned, persistent** `UNITED_STATE_MASTER_KEY` through your deployment's secret mechanism; do not generate a key in the container startup command:
 
 ```bash
+# UNITED_STATE_MASTER_KEY is supplied by the deployment's secret mechanism.
 docker run --rm \
   --mount type=volume,source=united-pb-data,target=/pb_data \
   --env UNITED_STATE_MASTER_KEY \
@@ -78,11 +85,12 @@ United does not automatically import or migrate state from an existing Terraform
 
 ```bash
 make devprep
-UNITED_STATE_MASTER_KEY="$(openssl rand -base64 32)" make run
+# Inject a previously provisioned persistent key through your shell or secret tool.
+make run
 make test
 ```
 
-`make run` starts United with local PocketBase data in `./pb_data` through Air. `make test` runs the standalone Terraform integration harness without cloud-service, distributed-lock, or reverse-proxy dependencies.
+`make run` starts United with local PocketBase data in `./pb_data` through Air and requires the same previously provisioned `UNITED_STATE_MASTER_KEY` used for that data. `make test` runs the standalone Terraform integration harness with its own ephemeral test key and without cloud-service, distributed-lock, or reverse-proxy dependencies.
 
 ## Copyright
 
