@@ -337,6 +337,7 @@ func unlockState(e *core.RequestEvent, group *core.Record) error {
 	}
 
 	log.Printf("unlock state failed: %v", err)
+
 	return stateUnavailable(e)
 }
 

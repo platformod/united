@@ -40,6 +40,7 @@ func registerGroupHooks(app core.App, cfg Config) {
 					return errors.New("immutable group identity field changed")
 				}
 			}
+
 			if !e.Record.Original().GetDateTime("deletedAt").IsZero() {
 				return errors.New("deleted group cannot be modified")
 			}
@@ -131,6 +132,7 @@ func registerStateHooks(app core.App) {
 					return errors.New("immutable state identity field changed")
 				}
 			}
+
 			if e.Record.Original().GetString("deletedAt") != "" {
 				return errors.New("deleted state cannot be modified")
 			}
