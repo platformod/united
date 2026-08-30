@@ -5,12 +5,10 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"net/http"
 	"sync"
 	"testing"
 
 	"github.com/pocketbase/pocketbase"
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/stretchr/testify/require"
@@ -58,33 +56,12 @@ func fixtureAuthToken(t testing.TB, app core.App, collection, email string) stri
 	return token
 }
 
-func bindTestRoutes(t testing.TB, app core.App) http.Handler {
+func bindTestRoutes(t testing.TB, app core.App) {
 	t.Helper()
 
 	cfg := Config{StateMasterKey: make([]byte, 32)}
 	registerHooks(app, cfg)
 	registerRoutes(app, cfg)
-
-	var (
-		once    sync.Once
-		handler http.Handler
-	)
-	buildHandler := func() {
-		router, err := apis.NewRouter(app)
-		require.NoError(t, err)
-		serveEvent := &core.ServeEvent{App: app, Router: router}
-		require.NoError(t, app.OnServe().Trigger(serveEvent, func(e *core.ServeEvent) error {
-			return e.Next()
-		}))
-
-		handler, err = router.BuildMux()
-		require.NoError(t, err)
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		once.Do(buildHandler)
-		handler.ServeHTTP(w, r)
-	})
 }
 
 func newTestApp(t *testing.T) *pocketbase.PocketBase {
