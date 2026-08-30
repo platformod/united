@@ -37,3 +37,4 @@ tests/tmp/
 
 # Local tool caches
 .cache/
+.tmp-go-cache/
