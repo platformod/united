@@ -8,7 +8,10 @@ group_slug=${GROUP_SLUG:?GROUP_SLUG must be set}
 state_name=${STATE_NAME:?STATE_NAME must be set}
 TF_HTTP_USERNAME="terraform-$RANDOM-$RANDOM"
 TF_HTTP_PASSWORD=$(openssl rand -base64 24)
-export TF_HTTP_USERNAME TF_HTTP_PASSWORD
+ADMIN_EMAIL="admin-$RANDOM-$RANDOM@example.test"
+ADMIN_PASSWORD=$(openssl rand -base64 24)
+OWNER_EMAIL="owner-$RANDOM-$RANDOM@example.test"
+export TF_HTTP_USERNAME TF_HTTP_PASSWORD ADMIN_EMAIL ADMIN_PASSWORD
 
 data_dir=$(mktemp -d "${TMPDIR:-/tmp}/united-pocketbase-test.XXXXXX")
 server_pid=""
@@ -58,17 +61,50 @@ stop_server() {
 	server_pid=""
 }
 
+authenticate_superuser() {
+	local payload
+
+	payload=$(jq -n --arg identity "$ADMIN_EMAIL" --arg password "$ADMIN_PASSWORD" '{identity: $identity, password: $password}')
+	curl --fail-with-body --silent --show-error \
+		--header 'Content-Type: application/json' \
+		--data "$payload" \
+		"$api_url/api/collections/_superusers/auth-with-password" | jq -er '.token'
+}
+
 inspect_state() {
-	"$united_bin" test-inspect --dir="$data_dir" --group-slug="$group_slug" --state-name="$state_name"
+	local admin_token state_metadata state_id version_metadata states versions deleted
+
+	admin_token=$(authenticate_superuser)
+	state_metadata=$(curl --fail-with-body --silent --show-error --get \
+		--header "Authorization: Bearer $admin_token" \
+		--data-urlencode "filter=group = \"$group_id\" && name = \"$state_name\"" \
+		--data-urlencode 'fields=id,deletedAt' \
+		"$api_url/api/collections/states/records")
+	states=$(jq -er '.totalItems' <<<"$state_metadata")
+	state_id=$(jq -er '.items[0].id // empty' <<<"$state_metadata")
+	deleted=$(jq -er '(.items[0].deletedAt // "") != ""' <<<"$state_metadata")
+	version_metadata=$(curl --fail-with-body --silent --show-error --get \
+		--header "Authorization: Bearer $admin_token" \
+		--data-urlencode "filter=state = \"$state_id\"" \
+		--data-urlencode 'fields=id,state' \
+		"$api_url/api/collections/statefiles/records")
+	versions=$(jq -er '.totalItems' <<<"$version_metadata")
+
+	jq -cn --argjson states "$states" --argjson versions "$versions" --argjson deleted "$deleted" \
+		'{states: $states, versions: $versions, deleted: $deleted}'
 }
 
 export UNITED_STATE_MASTER_KEY
 UNITED_STATE_MASTER_KEY=$(openssl rand -base64 32)
+if [[ ! -e "$data_dir/data.db" ]]; then
+	UNITED_STATE_MASTER_KEY="$UNITED_STATE_MASTER_KEY" "$united_bin" superuser upsert "$ADMIN_EMAIL" "$ADMIN_PASSWORD" --dir="$data_dir"
+fi
 start_server
-export TF_HTTP_ADDRESS="http://127.0.0.1:$port/state/$group_slug/$state_name"
+api_url="http://127.0.0.1:$port"
+group_id=$("$(dirname "$0")/provision.sh" "$api_url" "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$OWNER_EMAIL" "$group_slug" "$TF_HTTP_USERNAME")
+export TF_HTTP_ADDRESS="$api_url/state/$group_slug/$state_name"
 export TF_HTTP_LOCK_ADDRESS="$TF_HTTP_ADDRESS"
 export TF_HTTP_UNLOCK_ADDRESS="$TF_HTTP_ADDRESS"
-"$(dirname "$0")/provision.sh" "$united_bin" "$data_dir" "owner@example.test" "$group_slug" "$TF_HTTP_USERNAME" "$TF_HTTP_PASSWORD"
 terraform init -reconfigure
 terraform apply -lock=false -auto-approve
 terraform apply -lock=false -var changer=bar -auto-approve
@@ -100,6 +136,7 @@ echo "$inspection" | grep -q '"deleted":true'
 
 stop_server
 start_server
+api_url="http://127.0.0.1:$port"
 inspection=$(inspect_state)
 echo "$inspection" | grep -q '"states":1'
 echo "$inspection" | grep -q '"deleted":true'
