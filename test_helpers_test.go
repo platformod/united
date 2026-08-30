@@ -5,13 +5,78 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"net/http"
 	"sync"
 	"testing"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
 	"github.com/stretchr/testify/require"
 )
+
+func TestFixtureTestAppUsesIsolatedCopy(t *testing.T) {
+	first := newFixtureTestApp(t)
+	second := newFixtureTestApp(t)
+
+	firstFixtureUser, err := first.FindAuthRecordByEmail("users", "user@example.com")
+	require.NoError(t, err)
+	secondFixtureUser, err := second.FindAuthRecordByEmail("users", "user@example.com")
+	require.NoError(t, err)
+	require.Equal(t, firstFixtureUser.Id, secondFixtureUser.Id)
+
+	created := createUserWithEmail(t, first, "isolated@example.test")
+	firstUser, err := first.FindAuthRecordByEmail("users", created.GetString("email"))
+	require.NoError(t, err)
+	require.Equal(t, created.Id, firstUser.Id)
+
+	_, err = second.FindAuthRecordByEmail("users", created.GetString("email"))
+	require.Error(t, err)
+}
+
+const testDataDir = "test_pb_data"
+
+func newFixtureTestApp(t testing.TB) *tests.TestApp {
+	t.Helper()
+
+	app, err := tests.NewTestApp(testDataDir)
+	require.NoError(t, err)
+	t.Cleanup(app.Cleanup)
+
+	return app
+}
+
+func fixtureAuthToken(t testing.TB, app core.App, collection, email string) string {
+	t.Helper()
+
+	record, err := app.FindAuthRecordByEmail(collection, email)
+	require.NoError(t, err)
+	token, err := record.NewAuthToken()
+	require.NoError(t, err)
+
+	return token
+}
+
+func bindTestRoutes(t testing.TB, app core.App) http.Handler {
+	t.Helper()
+
+	cfg := Config{StateMasterKey: make([]byte, 32)}
+	registerHooks(app, cfg)
+	registerRoutes(app, cfg)
+
+	router, err := apis.NewRouter(app)
+	require.NoError(t, err)
+	serveEvent := &core.ServeEvent{App: app, Router: router}
+	require.NoError(t, app.OnServe().Trigger(serveEvent, func(e *core.ServeEvent) error {
+		return e.Next()
+	}))
+
+	handler, err := router.BuildMux()
+	require.NoError(t, err)
+
+	return handler
+}
 
 func newTestApp(t *testing.T) *pocketbase.PocketBase {
 	t.Helper()
