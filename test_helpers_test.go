@@ -3,6 +3,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"sync"
 	"testing"
 
 	"github.com/pocketbase/pocketbase"
@@ -23,6 +26,24 @@ func newTestApp(t *testing.T) *pocketbase.PocketBase {
 	return app
 }
 
+var (
+	testPasswordOnce  sync.Once
+	testPasswordValue string
+)
+
+func testPassword(t *testing.T) string {
+	t.Helper()
+
+	testPasswordOnce.Do(func() {
+		value := make([]byte, 24)
+		_, err := rand.Read(value)
+		require.NoError(t, err)
+		testPasswordValue = base64.RawStdEncoding.EncodeToString(value)
+	})
+
+	return testPasswordValue
+}
+
 func createUser(t *testing.T, app core.App) *core.Record {
 	t.Helper()
 
@@ -36,7 +57,7 @@ func createUserWithEmail(t *testing.T, app core.App, email string) *core.Record 
 	require.NoError(t, err)
 	user := core.NewRecord(collection)
 	user.Set("email", email)
-	user.SetPassword("correct horse")
+	user.SetPassword(testPassword(t))
 	require.NoError(t, app.Save(user))
 	return user
 }

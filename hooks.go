@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -179,23 +180,47 @@ func validateStateRecord(e *core.RecordEvent) error {
 		}
 	}
 
-	lockFieldsPresent := 0
-	if e.Record.GetString("lockID") != "" {
-		lockFieldsPresent++
-	}
+	return validateStateLock(e.Record)
+}
 
-	lockInfo := strings.TrimSpace(e.Record.GetString("lockInfo"))
-	if lockInfo != "" && lockInfo != "null" {
-		lockFieldsPresent++
-	}
+func validateStateLock(record *core.Record) error {
+	lockID := record.GetString("lockID")
+	lockInfo := strings.TrimSpace(record.GetString("lockInfo"))
+	lockFieldsPresent := stateLockFieldCount(record, lockID, lockInfo)
 
-	if !e.Record.GetDateTime("lockExpiresAt").IsZero() {
-		lockFieldsPresent++
-	}
-
-	if lockFieldsPresent != 0 && lockFieldsPresent != 3 {
+	if lockFieldsPresent != 0 && lockFieldsPresent != lockFieldsPerRecord {
 		return errors.New("state lock fields must be all empty or all present")
 	}
 
+	if lockFieldsPresent != lockFieldsPerRecord {
+		return nil
+	}
+
+	var storedLock LockInfo
+	if err := json.Unmarshal([]byte(lockInfo), &storedLock); err != nil {
+		return errors.New("state lock info must be valid JSON")
+	}
+
+	if storedLock.ID == "" || storedLock.ID != lockID {
+		return errors.New("state lock info ID must match lockID")
+	}
+
 	return nil
+}
+
+func stateLockFieldCount(record *core.Record, lockID, lockInfo string) int {
+	count := 0
+	fields := []bool{
+		lockID != "",
+		lockInfo != "" && lockInfo != "null",
+		!record.GetDateTime("lockExpiresAt").IsZero(),
+	}
+
+	for _, present := range fields {
+		if present {
+			count++
+		}
+	}
+
+	return count
 }

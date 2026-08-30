@@ -259,7 +259,7 @@ Expected: PocketBase is a direct runtime dependency and the diff has no whitespa
 ```go
 func TestGroupCreationGeneratesKeyAndRejectsIdentityChanges(t *testing.T) {
     app := newTestApp(t)
-    group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+    group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
     require.NotEmpty(t, group.GetString("wrappedStateKey"))
 
     group.Set("slug", "renamed")
@@ -319,7 +319,7 @@ func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
 func TestGroupCredentialsCannotUsePocketBaseAuthEndpoint(t *testing.T) {
     app, group := newHTTPTestAppWithGroup(t)
     response := requestJSON(t, app, http.MethodPost, "/api/collections/groups/auth-with-password", map[string]string{
-        "identity": group.GetString("username"), "password": "correct horse",
+        "identity": group.GetString("username"), "password": testPassword(t),
     })
     require.NotEqual(t, http.StatusOK, response.Code)
 }
@@ -416,10 +416,10 @@ Expected: PASS with no whitespace errors.
 func TestFirstPostCreatesEncryptedVersionAndGetReturnsOriginalBody(t *testing.T) {
     app, group := newHTTPTestAppWithGroup(t)
     body := []byte(`{"version":4,"serial":1}`)
-    post := request(t, app, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse")
+    post := request(t, app, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t))
     require.Equal(t, http.StatusOK, post.Code)
 
-    get := request(t, app, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+    get := request(t, app, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
     require.Equal(t, http.StatusOK, get.Code)
     require.Equal(t, body, get.Body.Bytes())
     require.Equal(t, strconv.Itoa(len(body)), get.Header().Get("Content-Length"))

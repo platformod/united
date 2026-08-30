@@ -30,7 +30,7 @@ func TestDeletedGroupReturnsGoneOnlyAfterValidBasicAuth(t *testing.T) {
 	group.Set("deletedAt", "2026-08-30 00:00:00.000Z")
 	require.NoError(t, app.Save(group))
 
-	validCredentials := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	validCredentials := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusGone, validCredentials.Code)
 
 	for _, credentials := range []struct {
@@ -38,8 +38,8 @@ func TestDeletedGroupReturnsGoneOnlyAfterValidBasicAuth(t *testing.T) {
 		username string
 		password string
 	}{
-		{name: "unknown group", username: group.GetString("username"), password: "correct horse"},
-		{name: "wrong username", username: "wrong", password: "correct horse"},
+		{name: "unknown group", username: group.GetString("username"), password: testPassword(t)},
+		{name: "wrong username", username: "wrong", password: testPassword(t)},
 		{name: "wrong password", username: group.GetString("username"), password: "wrong"},
 	} {
 		t.Run(credentials.name, func(t *testing.T) {
@@ -57,9 +57,9 @@ func TestDeletedGroupReturnsGoneOnlyAfterValidBasicAuth(t *testing.T) {
 
 func TestCrossGroupCredentialsCannotAccessAnotherGroupURL(t *testing.T) {
 	app, platform, handler := newHTTPTestAppWithGroup(t)
-	operations := createGroup(t, app, findRecord(t, app, "users", platform.GetString("owner")), "operations", "operations-tf", "correct horse")
+	operations := createGroup(t, app, findRecord(t, app, "users", platform.GetString("owner")), "operations", "operations-tf", testPassword(t))
 
-	response := request(t, handler, http.MethodGet, stateURL(platform, "network"), nil, operations.GetString("username"), "correct horse")
+	response := request(t, handler, http.MethodGet, stateURL(platform, "network"), nil, operations.GetString("username"), testPassword(t))
 
 	require.Equal(t, http.StatusUnauthorized, response.Code)
 	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
@@ -68,7 +68,7 @@ func TestCrossGroupCredentialsCannotAccessAnotherGroupURL(t *testing.T) {
 func TestStateAccessSurvivesGroupDisplayAndUserNameChanges(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 	body := []byte(`{"version":4,"serial":1}`)
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t)).Code)
 
 	group = findRecord(t, app, "groups", group.Id)
 	group.Set("displayName", "Platform Engineering")
@@ -77,7 +77,7 @@ func TestStateAccessSurvivesGroupDisplayAndUserNameChanges(t *testing.T) {
 	owner.Set("name", "Renamed Owner")
 	require.NoError(t, app.Save(owner))
 
-	response := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	response := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, body, response.Body.Bytes())
 }
@@ -100,7 +100,7 @@ func TestGroupCredentialsCannotUsePocketBaseAuthEndpoint(t *testing.T) {
 
 	response := requestJSON(t, handler, http.MethodPost, "/api/collections/groups/auth-with-password", map[string]string{
 		"identity": group.GetString("username"),
-		"password": "correct horse",
+		"password": testPassword(t),
 	})
 
 	require.NotEqual(t, http.StatusOK, response.Code)
@@ -111,7 +111,7 @@ func newHTTPTestAppWithGroup(t *testing.T) (*pocketbase.PocketBase, *core.Record
 
 	app := newTestApp(t)
 	owner := createUser(t, app)
-	group := createGroup(t, app, owner, "platform", "terraform", "correct horse")
+	group := createGroup(t, app, owner, "platform", "terraform", testPassword(t))
 
 	return app, group, newTestHandler(t, app)
 }

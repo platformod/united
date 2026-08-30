@@ -27,8 +27,8 @@ func TestGroupOwnerAPIRestrictsGroupManagementToItsOwner(t *testing.T) {
 	created := requestJSONWithAuth(t, handler, http.MethodPost, "/api/collections/groups/records", map[string]string{
 		"email":           "platform-tf@terraform.invalid",
 		"username":        "platform-tf",
-		"password":        "correct horse",
-		"passwordConfirm": "correct horse",
+		"password":        testPassword(t),
+		"passwordConfirm": testPassword(t),
 		"slug":            "platform",
 		"displayName":     "Platform",
 		"owner":           otherUser.Id,
@@ -64,7 +64,7 @@ func TestGroupSoftDeleteRetainsTheRecord(t *testing.T) {
 	app := newTestApp(t)
 	handler := newTestHandler(t, app)
 	owner := createUser(t, app)
-	group := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, owner, "platform", "platform-tf", testPassword(t))
 	token := authenticateUser(t, handler, owner.GetString("email"))
 
 	deleted := requestWithAuth(t, handler, http.MethodDelete, "/api/collections/groups/records/"+group.Id, nil, token)
@@ -78,7 +78,7 @@ func TestDeletedGroupCannotBeUpdatedOrRevivedThroughTheAPI(t *testing.T) {
 	app := newTestApp(t)
 	handler := newTestHandler(t, app)
 	owner := createUser(t, app)
-	group := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, owner, "platform", "platform-tf", testPassword(t))
 	token := authenticateUser(t, handler, owner.GetString("email"))
 
 	require.Equal(t, http.StatusNoContent, requestWithAuth(t, handler, http.MethodDelete, "/api/collections/groups/records/"+group.Id, nil, token).Code)
@@ -93,9 +93,42 @@ func TestDeletedGroupCannotBeUpdatedOrRevivedThroughTheAPI(t *testing.T) {
 	require.False(t, tombstoned.GetDateTime("deletedAt").IsZero())
 }
 
+func TestGroupSlugMustBeOnePathSafeSegment(t *testing.T) {
+	app := newTestApp(t)
+	owner := createUser(t, app)
+	collection, err := app.FindCollectionByNameOrId("groups")
+	require.NoError(t, err)
+
+	for _, slug := range []string{"platform", "platform-prod", "p2"} {
+		t.Run("accepts "+slug, func(t *testing.T) {
+			group := core.NewRecord(collection)
+			group.Set("email", slug+"@terraform.invalid")
+			group.Set("username", slug+"-tf")
+			group.SetPassword(testPassword(t))
+			group.Set("slug", slug)
+			group.Set("displayName", slug)
+			group.Set("owner", owner.Id)
+			require.NoError(t, app.Save(group))
+		})
+	}
+
+	for _, slug := range []string{"platform/production", "platform production", ".", "..", "platform%2Fproduction", "platform?debug=true"} {
+		t.Run("rejects "+slug, func(t *testing.T) {
+			group := core.NewRecord(collection)
+			group.Set("email", "invalid-"+slug+"@terraform.invalid")
+			group.Set("username", "invalid-"+slug)
+			group.SetPassword(testPassword(t))
+			group.Set("slug", slug)
+			group.Set("displayName", slug)
+			group.Set("owner", owner.Id)
+			require.Error(t, app.Save(group))
+		})
+	}
+}
+
 func TestGroupCreationGeneratesKeyAndRejectsIdentityChanges(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	require.NotEmpty(t, group.GetString("wrappedStateKey"))
 
 	group.Set("slug", "renamed")
@@ -104,7 +137,7 @@ func TestGroupCreationGeneratesKeyAndRejectsIdentityChanges(t *testing.T) {
 
 func TestStateIdentityCannotChange(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 
 	state.Set("name", "renamed")
@@ -114,8 +147,8 @@ func TestStateIdentityCannotChange(t *testing.T) {
 func TestStatefileMustBelongToStatesGroup(t *testing.T) {
 	app := newTestApp(t)
 	owner := createUser(t, app)
-	stateGroup := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
-	otherGroup := createGroup(t, app, owner, "operations", "operations-tf", "correct horse")
+	stateGroup := createGroup(t, app, owner, "platform", "platform-tf", testPassword(t))
+	otherGroup := createGroup(t, app, owner, "operations", "operations-tf", testPassword(t))
 	state := createState(t, app, stateGroup, "network")
 
 	statefile := newStatefile(t, app, state, otherGroup)
@@ -124,7 +157,7 @@ func TestStatefileMustBelongToStatesGroup(t *testing.T) {
 
 func TestStatefileCannotChange(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	statefile := createStatefile(t, app, createState(t, app, group, "network"), group)
 
 	statefile.Set("contentType", "application/octet-stream")
@@ -133,7 +166,7 @@ func TestStatefileCannotChange(t *testing.T) {
 
 func TestStateCurrentVersionMustBelongToState(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 	otherState := createState(t, app, group, "database")
 	otherVersion := createStatefile(t, app, otherState, group)
@@ -142,9 +175,34 @@ func TestStateCurrentVersionMustBelongToState(t *testing.T) {
 	require.Error(t, app.Save(state))
 }
 
+func TestStateLockInfoMustBeJSONWithMatchingID(t *testing.T) {
+	app := newTestApp(t)
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
+
+	for _, test := range []struct {
+		name     string
+		lockID   string
+		lockInfo string
+	}{
+		{name: "malformed JSON", lockID: "lock-id", lockInfo: `{"ID":`},
+		{name: "JSON string", lockID: "lock-id", lockInfo: `"lock-id"`},
+		{name: "missing ID", lockID: "lock-id", lockInfo: `{}`},
+		{name: "empty ID", lockID: "lock-id", lockInfo: `{"ID":""}`},
+		{name: "mismatched ID", lockID: "lock-id", lockInfo: `{"ID":"other-lock"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := createState(t, app, group, test.name)
+			state.Set("lockID", test.lockID)
+			state.Set("lockInfo", test.lockInfo)
+			state.Set("lockExpiresAt", types.NowDateTime().Add(time.Minute))
+			require.Error(t, app.Save(state))
+		})
+	}
+}
+
 func TestStateLockFieldsMustBeAllEmptyOrAllPresent(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 
 	state.Set("lockID", "lock-id")
@@ -166,7 +224,7 @@ func authenticateUser(t *testing.T, handler http.Handler, email string) string {
 
 	response := requestJSONWithAuth(t, handler, http.MethodPost, "/api/collections/users/auth-with-password", map[string]string{
 		"identity": email,
-		"password": "correct horse",
+		"password": testPassword(t),
 	}, "")
 	require.Equal(t, http.StatusOK, response.Code)
 

@@ -12,8 +12,8 @@ import (
 func TestFindStateScopesLookupToGroupAndName(t *testing.T) {
 	app := newTestApp(t)
 	owner := createUser(t, app)
-	platform := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
-	operations := createGroup(t, app, owner, "operations", "operations-tf", "correct horse")
+	platform := createGroup(t, app, owner, "platform", "platform-tf", testPassword(t))
+	operations := createGroup(t, app, owner, "operations", "operations-tf", testPassword(t))
 	want := createState(t, app, platform, "network")
 	createState(t, app, operations, "network")
 
@@ -25,7 +25,7 @@ func TestFindStateScopesLookupToGroupAndName(t *testing.T) {
 
 func TestActiveLockUsesServerUTCAndExpiresAfter35Minutes(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 	info := LockInfo{ID: "lock-1", Operation: "OperationTypeApply", Who: "terraform"}
 	acquiredAt := time.Date(2026, 8, 29, 8, 0, 0, 0, time.FixedZone("PDT", -4*60*60))
@@ -48,7 +48,7 @@ func TestActiveLockUsesServerUTCAndExpiresAfter35Minutes(t *testing.T) {
 
 func TestActiveLockRejectsPartialOrInvalidStoredPayload(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 
 	state.Set("lockID", "lock-1")
@@ -67,7 +67,7 @@ func TestActiveLockRejectsPartialOrInvalidStoredPayload(t *testing.T) {
 
 func TestClearExpiredLockPersistsTheClearedFields(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 	setLock(state, LockInfo{ID: "lock-1"}, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
 
@@ -86,7 +86,7 @@ func TestClearExpiredLockPersistsTheClearedFields(t *testing.T) {
 
 func TestClearLockClearsAllLockFields(t *testing.T) {
 	app := newTestApp(t)
-	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "platform-tf", testPassword(t))
 	state := createState(t, app, group, "network")
 	setLock(state, LockInfo{ID: "lock-1"}, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
 

@@ -64,7 +64,7 @@ A group credential is an API credential for Terraform only. It cannot be used to
 
 ## Group management
 
-Human users manage groups through PocketBase's authenticated collection APIs. Those APIs are owner-scoped: a signed-in user can create, list, view, update, and delete only groups they own. The service assigns group ownership at creation, so callers cannot create a group for another user; route slugs, Terraform credential usernames, and ownership remain immutable.
+Human users manage groups through PocketBase's authenticated collection APIs. Those APIs are owner-scoped: a signed-in user can create, list, view, update, and delete only groups they own. The service assigns group ownership at creation, so callers cannot create a group for another user; route slugs, Terraform credential usernames, and ownership remain immutable. A route slug is one lowercase alphanumeric path segment with optional single hyphens between alphanumeric components (for example, `platform` or `platform-prod`); spaces, slashes, dot segments, percent encoding, and query delimiters are rejected.
 
 Deleting a group permanently creates an API tombstone rather than removing its records. The tombstone cannot be updated or revived through the normal group APIs and does not remove the group's logical states, state versions, or encrypted state files; their retention behavior is unchanged. State requests with that group's valid Basic Auth username and password receive `410 Gone`; this lets authorized Terraform clients distinguish a deleted group from a temporary failure. Requests for an unknown group, or with a missing or invalid username or password, always receive the generic `401 Unauthorized` Basic Auth challenge and do not reveal whether a group exists or was deleted.
 

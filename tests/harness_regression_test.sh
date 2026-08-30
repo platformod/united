@@ -113,8 +113,7 @@ require_contains "$run_script" 'TF_HTTP_PASSWORD=$(openssl rand -base64 24)'
 require_contains "$run_script" 'ADMIN_PASSWORD=$(openssl rand -base64 24)'
 assert_runtime_secret "$run_script" UNITED_STATE_MASTER_KEY '$(openssl rand -base64 32)'
 require_contains "$provision_script" 'password=${TF_HTTP_PASSWORD:?TF_HTTP_PASSWORD must be set}'
-require_absent "$run_script" 'correct horse'
-require_absent "$provision_script" 'correct horse'
+
 require_absent "$run_script" 'owner@example.test'
 require_absent "$provision_script" 'owner@example.test'
 

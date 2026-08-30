@@ -53,7 +53,7 @@ func TestMalformedLockAndUnlockPayloadsReturn400(t *testing.T) {
 	for _, method := range []string{"LOCK", "UNLOCK"} {
 		t.Run(method, func(t *testing.T) {
 			for _, body := range [][]byte{[]byte(`{`), []byte(`{"ID":""}`), []byte(`{"ID":"   "}`)} {
-				response := request(t, handler, method, stateURL(group, "network"), body, group.GetString("username"), "correct horse")
+				response := request(t, handler, method, stateURL(group, "network"), body, group.GetString("username"), testPassword(t))
 				require.Equal(t, http.StatusBadRequest, response.Code)
 			}
 		})
@@ -67,13 +67,13 @@ func TestUnlockAndDeleteHonorOwnershipAndExpiry(t *testing.T) {
 	missing := unlock(t, handler, group, "missing", LockInfo{ID: "first"})
 	require.Equal(t, http.StatusOK, missing.Code)
 	require.JSONEq(t, `{"message":"Lock Not Found. Expired. Probably."}`, missing.Body.String())
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "missing"), nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "missing"), nil, group.GetString("username"), testPassword(t)).Code)
 
 	require.Equal(t, http.StatusOK, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
 	wrongUnlock := unlock(t, handler, group, "network", LockInfo{ID: "second"})
 	require.Equal(t, http.StatusBadRequest, wrongUnlock.Code)
 	require.JSONEq(t, `{"ID":"first"}`, wrongUnlock.Body.String())
-	matchingUnlock := request(t, handler, "UNLOCK", stateURL(group, "network"), []byte("first\n"), group.GetString("username"), "correct horse")
+	matchingUnlock := request(t, handler, "UNLOCK", stateURL(group, "network"), []byte("first\n"), group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, matchingUnlock.Code)
 	require.JSONEq(t, `{"message":"ok"}`, matchingUnlock.Body.String())
 	state = findRecord(t, app, "states", state.Id)
@@ -82,14 +82,14 @@ func TestUnlockAndDeleteHonorOwnershipAndExpiry(t *testing.T) {
 	require.True(t, state.GetDateTime("lockExpiresAt").IsZero())
 
 	require.Equal(t, http.StatusOK, lock(t, handler, group, "network", LockInfo{ID: "first"}).Code)
-	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), "correct horse").Code)
-	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=second", nil, group.GetString("username"), "correct horse").Code)
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=first", nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t)).Code)
+	require.Equal(t, http.StatusLocked, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=second", nil, group.GetString("username"), testPassword(t)).Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network")+"?ID=first", nil, group.GetString("username"), testPassword(t)).Code)
 
 	state = findRecord(t, app, "states", state.Id)
 	require.False(t, state.GetDateTime("deletedAt").IsZero())
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), "correct horse").Code)
-	require.Equal(t, http.StatusGone, request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t)).Code)
+	require.Equal(t, http.StatusGone, request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), testPassword(t)).Code)
 
 	expired := createState(t, app, group, "expired")
 	setLock(expired, LockInfo{ID: "expired-lock"}, time.Now().UTC().Add(-lockLease))
@@ -97,7 +97,7 @@ func TestUnlockAndDeleteHonorOwnershipAndExpiry(t *testing.T) {
 	expiredUnlock := unlock(t, handler, group, "expired", LockInfo{ID: "expired-lock"})
 	require.Equal(t, http.StatusOK, expiredUnlock.Code)
 	require.JSONEq(t, `{"message":"Lock Not Found. Expired. Probably."}`, expiredUnlock.Body.String())
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "expired"), nil, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodDelete, stateURL(group, "expired"), nil, group.GetString("username"), testPassword(t)).Code)
 }
 
 func TestConcurrentLockAttempts(t *testing.T) {
@@ -129,7 +129,7 @@ func lock(t *testing.T, handler http.Handler, group *core.Record, name string, i
 	body, err := json.Marshal(info)
 	require.NoError(t, err)
 
-	return request(t, handler, "LOCK", stateURL(group, name), body, group.GetString("username"), "correct horse")
+	return request(t, handler, "LOCK", stateURL(group, name), body, group.GetString("username"), testPassword(t))
 }
 
 func unlock(t *testing.T, handler http.Handler, group *core.Record, name string, info LockInfo) *httptest.ResponseRecorder {
@@ -137,14 +137,14 @@ func unlock(t *testing.T, handler http.Handler, group *core.Record, name string,
 	body, err := json.Marshal(info)
 	require.NoError(t, err)
 
-	return request(t, handler, "UNLOCK", stateURL(group, name), body, group.GetString("username"), "correct horse")
+	return request(t, handler, "UNLOCK", stateURL(group, name), body, group.GetString("username"), testPassword(t))
 }
 
 func TestFirstPostCreatesEncryptedVersionAndGetReturnsOriginalBody(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 	body := []byte(`{"version":4,"serial":1}`)
 
-	post := request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse")
+	post := request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, post.Code)
 
 	state, err := findState(app, group.Id, "network")
@@ -153,7 +153,7 @@ func TestFirstPostCreatesEncryptedVersionAndGetReturnsOriginalBody(t *testing.T)
 	require.NoError(t, err)
 	require.NotEqual(t, body, storedStatefileBytes(t, app, statefile))
 
-	get := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	get := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, get.Code)
 	require.Equal(t, body, get.Body.Bytes())
 	require.Equal(t, strconv.Itoa(len(body)), get.Header().Get("Content-Length"))
@@ -164,17 +164,17 @@ func TestPostCreatesHistoryAndLockedPostRequiresMatchingQueryID(t *testing.T) {
 	first := []byte(`{"version":4,"serial":1}`)
 	second := []byte(`{"version":4,"serial":2}`)
 
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), first, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), first, group.GetString("username"), testPassword(t)).Code)
 	state, err := findState(app, group.Id, "network")
 	require.NoError(t, err)
 	firstVersion := state.GetString("currentVersion")
 	setLock(state, LockInfo{ID: "lock-1"}, time.Now())
 	require.NoError(t, app.Save(state))
 
-	wrong := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=wrong", second, group.GetString("username"), "correct horse")
+	wrong := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=wrong", second, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusBadRequest, wrong.Code)
 
-	matching := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=lock-1", second, group.GetString("username"), "correct horse")
+	matching := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=lock-1", second, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, matching.Code)
 
 	state, err = findState(app, group.Id, "network")
@@ -189,7 +189,7 @@ func TestGetReturnsNotFoundForMissingDeletedAndVersionlessStates(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 
 	t.Run("missing", func(t *testing.T) {
-		response := request(t, handler, http.MethodGet, stateURL(group, "missing"), nil, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodGet, stateURL(group, "missing"), nil, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusNotFound, response.Code)
 	})
 
@@ -198,14 +198,14 @@ func TestGetReturnsNotFoundForMissingDeletedAndVersionlessStates(t *testing.T) {
 		state.Set("deletedAt", types.NowDateTime())
 		require.NoError(t, app.Save(state))
 
-		response := request(t, handler, http.MethodGet, stateURL(group, "deleted"), nil, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodGet, stateURL(group, "deleted"), nil, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusNotFound, response.Code)
 	})
 
 	t.Run("versionless", func(t *testing.T) {
 		createState(t, app, group, "versionless")
 
-		response := request(t, handler, http.MethodGet, stateURL(group, "versionless"), nil, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodGet, stateURL(group, "versionless"), nil, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusNotFound, response.Code)
 	})
 }
@@ -219,14 +219,14 @@ func TestPostRejectsDeletedStateAndInvalidLockIDUsage(t *testing.T) {
 		state.Set("deletedAt", types.NowDateTime())
 		require.NoError(t, app.Save(state))
 
-		response := request(t, handler, http.MethodPost, stateURL(group, "deleted"), body, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodPost, stateURL(group, "deleted"), body, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusGone, response.Code)
 	})
 
 	t.Run("ID without active lock", func(t *testing.T) {
 		createState(t, app, group, "unlocked")
 
-		response := request(t, handler, http.MethodPost, stateURL(group, "unlocked")+"?ID=lock-1", body, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodPost, stateURL(group, "unlocked")+"?ID=lock-1", body, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusBadRequest, response.Code)
 	})
 
@@ -235,7 +235,7 @@ func TestPostRejectsDeletedStateAndInvalidLockIDUsage(t *testing.T) {
 		setLock(state, LockInfo{ID: "lock-1"}, time.Now())
 		require.NoError(t, app.Save(state))
 
-		response := request(t, handler, http.MethodPost, stateURL(group, "locked"), body, group.GetString("username"), "correct horse")
+		response := request(t, handler, http.MethodPost, stateURL(group, "locked"), body, group.GetString("username"), testPassword(t))
 		require.Equal(t, http.StatusBadRequest, response.Code)
 	})
 }
@@ -246,10 +246,10 @@ func TestExpiredLockRejectsStaleIDAndAllowsNoIDPost(t *testing.T) {
 	setLock(state, LockInfo{ID: "expired-lock"}, time.Now().Add(-lockLease))
 	require.NoError(t, app.Save(state))
 
-	stale := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=expired-lock", []byte(`{"version":4}`), group.GetString("username"), "correct horse")
+	stale := request(t, handler, http.MethodPost, stateURL(group, "network")+"?ID=expired-lock", []byte(`{"version":4}`), group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusBadRequest, stale.Code)
 
-	response := request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), "correct horse")
+	response := request(t, handler, http.MethodPost, stateURL(group, "network"), []byte(`{"version":4}`), group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, response.Code)
 
 	state = findRecord(t, app, "states", state.Id)
@@ -294,7 +294,7 @@ func TestTamperedStateVersionsReturn503(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			app, group, handler := newHTTPTestAppWithGroup(t)
 			body := []byte(`{"version":4,"serial":1}`)
-			require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+			require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t)).Code)
 			state, err := findState(app, group.Id, "network")
 			require.NoError(t, err)
 			statefile, err := app.FindRecordById("statefiles", state.GetString("currentVersion"))
@@ -302,7 +302,7 @@ func TestTamperedStateVersionsReturn503(t *testing.T) {
 
 			corrupt(t, app, group, statefile)
 
-			response := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+			response := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 			requireServiceUnavailable(t, response)
 		})
 	}
@@ -311,16 +311,16 @@ func TestTamperedStateVersionsReturn503(t *testing.T) {
 func TestPasswordRotationRejectsOldPasswordAndDecryptsOldVersion(t *testing.T) {
 	app, group, handler := newHTTPTestAppWithGroup(t)
 	body := []byte(`{"version":4,"serial":1}`)
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t)).Code)
 
 	group = findRecord(t, app, "groups", group.Id)
-	group.SetPassword("new correct horse")
+	group.SetPassword(testPassword(t) + "-rotated")
 	require.NoError(t, app.Save(group))
 
-	oldPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	oldPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusUnauthorized, oldPassword.Code)
 
-	newPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "new correct horse")
+	newPassword := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t)+"-rotated")
 	require.Equal(t, http.StatusOK, newPassword.Code)
 	require.Equal(t, body, newPassword.Body.Bytes())
 }
@@ -338,9 +338,9 @@ func TestRestartReadsCurrentVersionFromExistingDataDirectory(t *testing.T) {
 		}
 	})
 
-	group := createGroup(t, app, createUser(t, app), "platform", "terraform", "correct horse")
+	group := createGroup(t, app, createUser(t, app), "platform", "terraform", testPassword(t))
 	body := []byte(`{"version":4,"serial":1}`)
-	require.Equal(t, http.StatusOK, request(t, newTestHandler(t, app), http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, newTestHandler(t, app), http.MethodPost, stateURL(group, "network"), body, group.GetString("username"), testPassword(t)).Code)
 	require.NoError(t, app.ResetBootstrapState())
 	firstRunning = false
 
@@ -350,7 +350,7 @@ func TestRestartReadsCurrentVersionFromExistingDataDirectory(t *testing.T) {
 		require.NoError(t, restarted.ResetBootstrapState())
 	})
 
-	response := request(t, newTestHandler(t, restarted), http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	response := request(t, newTestHandler(t, restarted), http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, response.Code)
 	require.Equal(t, body, response.Body.Bytes())
 }
@@ -360,7 +360,7 @@ func TestFailedPostPreservesCurrentVersion(t *testing.T) {
 	first := []byte(`{"version":4,"serial":1}`)
 	second := []byte(`{"version":4,"serial":2}`)
 
-	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), first, group.GetString("username"), "correct horse").Code)
+	require.Equal(t, http.StatusOK, request(t, handler, http.MethodPost, stateURL(group, "network"), first, group.GetString("username"), testPassword(t)).Code)
 
 	failStateUpdate := true
 	app.OnRecordUpdate("states").Bind(&hook.Handler[*core.RecordEvent]{
@@ -371,11 +371,11 @@ func TestFailedPostPreservesCurrentVersion(t *testing.T) {
 			return e.Next()
 		},
 	})
-	failed := request(t, handler, http.MethodPost, stateURL(group, "network"), second, group.GetString("username"), "correct horse")
+	failed := request(t, handler, http.MethodPost, stateURL(group, "network"), second, group.GetString("username"), testPassword(t))
 	failStateUpdate = false
 	require.Equal(t, http.StatusServiceUnavailable, failed.Code)
 
-	get := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	get := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), testPassword(t))
 	require.Equal(t, http.StatusOK, get.Code)
 	require.Equal(t, first, get.Body.Bytes())
 }
