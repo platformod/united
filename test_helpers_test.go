@@ -65,17 +65,26 @@ func bindTestRoutes(t testing.TB, app core.App) http.Handler {
 	registerHooks(app, cfg)
 	registerRoutes(app, cfg)
 
-	router, err := apis.NewRouter(app)
-	require.NoError(t, err)
-	serveEvent := &core.ServeEvent{App: app, Router: router}
-	require.NoError(t, app.OnServe().Trigger(serveEvent, func(e *core.ServeEvent) error {
-		return e.Next()
-	}))
+	var (
+		once    sync.Once
+		handler http.Handler
+	)
+	buildHandler := func() {
+		router, err := apis.NewRouter(app)
+		require.NoError(t, err)
+		serveEvent := &core.ServeEvent{App: app, Router: router}
+		require.NoError(t, app.OnServe().Trigger(serveEvent, func(e *core.ServeEvent) error {
+			return e.Next()
+		}))
 
-	handler, err := router.BuildMux()
-	require.NoError(t, err)
+		handler, err = router.BuildMux()
+		require.NoError(t, err)
+	}
 
-	return handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(buildHandler)
+		handler.ServeHTTP(w, r)
+	})
 }
 
 func newTestApp(t *testing.T) *pocketbase.PocketBase {
