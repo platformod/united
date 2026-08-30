@@ -62,13 +62,17 @@ terraform plan
 
 A group credential is an API credential for Terraform only. It cannot be used to log in to PocketBase and is not a human user account. The group route slug and credential username are immutable because they identify existing Terraform backend addresses. Rotating the group password immediately invalidates the old password; distribute the replacement to Terraform clients without changing the backend path.
 
-Deleting a group permanently tombstones it. State requests with that group's valid Basic Auth username and password receive `410 Gone`; this lets authorized Terraform clients distinguish a deleted group from a temporary failure. Requests for an unknown group, or with a missing or invalid username or password, always receive the generic `401 Unauthorized` Basic Auth challenge and do not reveal whether a group exists or was deleted.
+## Group management
+
+Human users manage groups through PocketBase's authenticated collection APIs. Those APIs are owner-scoped: a signed-in user can create, list, view, update, and delete only groups they own. The service assigns group ownership at creation, so callers cannot create a group for another user; route slugs, Terraform credential usernames, and ownership remain immutable.
+
+Deleting a group permanently creates an API tombstone rather than removing its records. The tombstone cannot be updated or revived through the normal group APIs and does not remove the group's logical states, state versions, or encrypted state files; their retention behavior is unchanged. State requests with that group's valid Basic Auth username and password receive `410 Gone`; this lets authorized Terraform clients distinguish a deleted group from a temporary failure. Requests for an unknown group, or with a missing or invalid username or password, always receive the generic `401 Unauthorized` Basic Auth challenge and do not reveal whether a group exists or was deleted.
 
 ## State lifecycle and locks
 
 Each successful state write creates an immutable encrypted state version. The logical state selects the current version while encrypted historical versions remain in protected PocketBase storage.
 
-Deleting a logical state creates a permanent tombstone: it cannot be read, locked, or recreated through the Terraform API, while retained encrypted versions remain available for the future retention policy. Automatic hard-delete retention cleanup is intentionally out of scope; a future administrative cleanup process must remove deleted logical states and their retained files according to a chosen retention period.
+Deleting a logical state creates a permanent tombstone: it cannot be read, locked, or recreated through the Terraform API, while retained encrypted versions remain available for the future retention policy. Group tombstones likewise retain the group's logical states, versions, and encrypted files. Automatic hard-delete retention cleanup is intentionally out of scope; a future administrative cleanup process must remove deleted logical states and their retained files according to a chosen retention period.
 
 State locks are server-enforced 35-minute leases. An expired lease may be replaced by a subsequent lock acquisition. Native `terraform force-unlock` support is accepted technical debt; see [`docs/terraform-force-unlock-investigation.md`](docs/terraform-force-unlock-investigation.md) before relying on it for recovery procedures.
 

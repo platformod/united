@@ -9,8 +9,12 @@ The serialized Terraform state associated with one logical state path. It is the
 _Avoid_: statefile, state blob, state object
 
 **Group**:
-An access boundary that owns a collection of state paths and the shared Basic Auth credential used by Terraform for those paths. Each group has one human owner, while a human user may own multiple groups.
+An access boundary that owns a collection of state paths and the shared Basic Auth credential used by Terraform for those paths. Each group has one human owner, while a human user may own multiple groups. Human users manage only their own groups through authenticated PocketBase APIs; the service assigns ownership on creation and does not allow it to change.
 _Avoid_: tenant bucket, project namespace
+
+**Deleted group**:
+A permanently inactive group created by an owner API deletion. It remains as an API tombstone and retains its logical states, state versions, and encrypted files; it cannot be updated or revived through normal PocketBase APIs. Terraform requests with a valid group credential receive `410 Gone`, while unknown, missing, or invalid credentials receive the generic `401 Unauthorized` challenge.
+_Avoid_: hard-deleted group, recoverable group
 
 **Group route slug**:
 The immutable, path-safe identifier used as the `group` segment of a Terraform backend address. It is distinct from the group’s mutable display name.
