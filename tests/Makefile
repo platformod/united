@@ -7,7 +7,12 @@ UNITED_BIN ?= ../dist/united
 GROUP_SLUG ?= integration
 STATE_NAME ?= terraform
 
-.PHONY: test
+.PHONY: test harness-regression
+
+test: harness-regression $(UNITED_BIN)
+
+harness-regression: $(UNITED_BIN)
+	@UNITED_BIN="$(UNITED_BIN)" ./harness_regression_test.sh
 
 test: $(UNITED_BIN)
 	@test -z "$${AWS_PROFILE:-}" || { echo "AWS_PROFILE is not supported by the PocketBase integration harness" >&2; exit 1; }

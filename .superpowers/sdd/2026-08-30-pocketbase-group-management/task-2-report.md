@@ -28,3 +28,7 @@ Passed:
 Known unrelated validation debt:
 
 - A standalone `golangci-lint run` checks the whole repository and currently fails at the pre-existing `state.go:340` `nlreturn` violation. Task 2 does not modify `state.go`; the changed-file `golangci-lint` hook within `pre-commit run --all-files` passed.
+
+## Fix round 1: shell regression coverage
+
+Added `tests/harness_regression_test.sh`, which is required by the `tests` Makefile before the integration lifecycle. It verifies the built binary rejects both removed CLI commands, runtime password generation has no static fallback/default in the harness, and the user/group provisioning and metadata inspection boundaries use PocketBase collection endpoints with bearer authentication. No production code or harness behavior changed. The target was first wired before the test script existed and failed with exit 127, then passed after the script was added.
