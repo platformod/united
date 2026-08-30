@@ -62,6 +62,8 @@ terraform plan
 
 A group credential is an API credential for Terraform only. It cannot be used to log in to PocketBase and is not a human user account. The group route slug and credential username are immutable because they identify existing Terraform backend addresses. Rotating the group password immediately invalidates the old password; distribute the replacement to Terraform clients without changing the backend path.
 
+Deleting a group permanently tombstones it. State requests with that group's valid Basic Auth username and password receive `410 Gone`; this lets authorized Terraform clients distinguish a deleted group from a temporary failure. Requests for an unknown group, or with a missing or invalid username or password, always receive the generic `401 Unauthorized` Basic Auth challenge and do not reveal whether a group exists or was deleted.
+
 ## State lifecycle and locks
 
 Each successful state write creates an immutable encrypted state version. The logical state selects the current version while encrypted historical versions remain in protected PocketBase storage.
