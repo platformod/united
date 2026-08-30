@@ -34,3 +34,6 @@ dist/
 # PocketBase runtime and integration-test data
 pb_data/
 tests/tmp/
+
+# Local tool caches
+.cache/
