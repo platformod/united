@@ -1,101 +1,88 @@
-# United: A multitenant Terraform HTTP backend server
+# United: a multitenant Terraform HTTP backend
 
-Designed to be run alongside [Atlantis](https://www.runatlantis.io/), United offers a simple to configure HTTP backend with locking, encryption, and flexible pass though authentication.  
-
-You would want to use this in situations where you have many teams with many statefiles and and consistent management of them across the platform/org/agency has become a burden.
+United is a PocketBase-based Terraform HTTP backend designed to run alongside [Atlantis](https://www.runatlantis.io/). It stores encrypted Terraform state versions and lock metadata in PocketBase, with one shared Terraform credential per group.
 
 ## Requirements
 
-- S3 Bucket
-- KMS Key
-- Redis
-- Something to run this server
-- Ideally a set of creds per team that can be stored separately
+- The United binary (or the published container image)
+- A **base64-encoded, 32-byte** `UNITED_STATE_MASTER_KEY`
+- Durable, access-controlled storage for PocketBase's `pb_data` directory and backups for that directory
+- A network location reachable only by Terraform clients such as Atlantis
 
-## Server Config
+United has no external object-store, key-management, distributed-lock, cloud CLI, or local cloud-emulation runtime requirement.
 
-Config is done though environment variables
+## Run United
+
+Generate a new key once using a secure secret-management workflow, store it outside the repository, and provide the same key on every start. Losing or changing the key makes existing encrypted state versions unreadable.
 
 ```bash
-######
-# Required
-######
-
-# S3 Bucket to store into
-export BUCKET="myorg-bucket-of-states"
-
-# KMS Key Arn to use for encrypting
-export KEY_ARN="arn:aws:kms:us-whoop-9:11111111111:key/dork-4242-9999-be3p-c0ffeec0ffee"
-
-######
-# Optional
-######
-
-# Port to listen on, defaults to 8080
-export PORT="4242"
-
-# Key prefix for S3.  This has security implications, see warning in code before changing this, defaults to "united"
-export BUCKET_PREFIX="yas"
-
-# Redis connection string for lock storage, defaults to redis://localhost:6379
-export REDIS_CONN="redis://meept:woah@the_elasticache_cluster:6379"
-
-# Enable passthough auth to AuthURL via POST, defaults to true
-export VALIDATE_AUTH="true"
-
-# URL to POST to, should return 200 for success.  Defaults to http://localhost:8090/api/collections/united/auth-with-password
-export AUTH_URL="https://inside-api/api/united-states-postage"
-
+UNITED_STATE_MASTER_KEY="$(openssl rand -base64 32)" ./dist/united serve --dir=./pb_data
 ```
 
-## Terraform Config
+`pb_data` contains PocketBase's SQLite data and the protected encrypted state files. Mount it on durable storage, restrict filesystem access to the service account, and back it up together as one unit. A backup without the corresponding master key cannot restore encrypted state, so protect and retain the key in an appropriate secret manager.
 
-Config is done via the [Terraform http backend](https://developer.hashicorp.com/terraform/language/settings/backends/http).  United uses the `/state` path and binds `/state/:group/:name` which you should provide.
+The container image starts United with `serve --dir=/pb_data` and declares `/pb_data` as a volume. Mount durable, protected storage there and provide `UNITED_STATE_MASTER_KEY` through your deployment's secret mechanism:
 
-An example is below:
+```bash
+docker run --rm \
+  --mount type=volume,source=united-pb-data,target=/pb_data \
+  --env UNITED_STATE_MASTER_KEY \
+  ghcr.io/platformod/united:latest
+```
+
+## Terraform configuration
+
+United preserves Terraform's HTTP backend endpoint paths. A state path is `/state/:group/:name`; use the same path for the state, lock, and unlock endpoints.
 
 ```terraform
 terraform {
   backend "http" {
-    address        = "https://united.my.org/state/my-group/this-state"
-    lock_address   = "https://united.my.org/state/my-group/this-state"
-    unlock_address = "https://united.my.org/state/my-group/this-state"
+    address        = "https://united.example.com/state/platform/network"
+    lock_address   = "https://united.example.com/state/platform/network"
+    unlock_address = "https://united.example.com/state/platform/network"
   }
 }
 ```
 
-Then run by setting the username and password via env vars:
+Configure Terraform with the group credential through its normal HTTP backend environment variables, supplied from a secret manager or your automation environment:
 
 ```bash
-export TF_HTTP_USERNAME="daryl"
-export TF_HTTP_PASSWORD="<runtime-generated-password>"
+export TF_HTTP_USERNAME
+export TF_HTTP_PASSWORD
 terraform init
 terraform plan
 ```
 
-Note that Atlantis can populate env vars via script, which is the ideal tool to either fetch creds from a secret store, or decrypt on the fly from a encrypted blob in the repo.
+A group credential is an API credential for Terraform only. It cannot be used to log in to PocketBase and is not a human user account. The group route slug and credential username are immutable because they identify existing Terraform backend addresses. Rotating the group password immediately invalidates the old password; distribute the replacement to Terraform clients without changing the backend path.
 
-## Runtime Notes
+## State lifecycle and locks
 
-- Protect s3 bucket as with anything.  Data is encrypted vis [AWS S3-CSE](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingClientSideEncryption.html) but care should still be taken to prevent leakage.  Same with the KMS key.
+Each successful state write creates an immutable encrypted state version. The logical state selects the current version while encrypted historical versions remain in protected PocketBase storage.
 
-- Do network isolation.  This service is meant to be interfaced by terraform, not the entire internet. Ideally run this next to Atlantis and only allow network traffic from it.
+Deleting a logical state creates a permanent tombstone: it cannot be read, locked, or recreated through the Terraform API, while retained encrypted versions remain available for the future retention policy. Automatic hard-delete retention cleanup is intentionally out of scope; a future administrative cleanup process must remove deleted logical states and their retained files according to a chosen retention period.
 
-- Use the auth validation.  This was designed to auth against [the PocketBase API](https://pocketbase.io/docs/api-records/#auth-with-password) but the format is simple enough to write a shim in front of another source if needed.  The alternative method is basically just a hackaround for testing purposes
+State locks are server-enforced 35-minute leases. An expired lease may be replaced by a subsequent lock acquisition. Native `terraform force-unlock` support is accepted technical debt; see [`docs/terraform-force-unlock-investigation.md`](docs/terraform-force-unlock-investigation.md) before relying on it for recovery procedures.
 
-- Enable TlS on fronting proxies, redis, auth url, etc...
+## Migrating an existing backend
 
-## F.A.Q.
+United does not automatically import or migrate state from an existing Terraform backend. Plan the migration per state path, keep a recoverable backup of the old backend, and use Terraform's backend migration flow (for example, `terraform init -migrate-state`) when switching the configuration to United. Verify the resulting state and lock behavior before retiring the previous backend.
 
-- Why united?
-  - Because it's the United States for Atlantis.
+## Operational security
 
-## Developing
+- Terminate TLS at a trusted fronting proxy and encrypt traffic between Terraform clients and that proxy.
+- Restrict network access to trusted Terraform automation; do not expose the service or PocketBase administration interface to the public internet.
+- Protect `pb_data`, backups, group credentials, and `UNITED_STATE_MASTER_KEY` as sensitive data. Do not commit them or log their values.
+- Use distinct group credentials and rotate their passwords through a managed secret-distribution process.
 
-- Setup your `~/.aws/config` and `~/.aws/credentials` with a localstack [profile](https://docs.localstack.cloud/user-guide/integrations/aws-cli/#configuring-a-custom-profile)
-- Running `make devprep` will get everything you need installed.
-- Run `make run` to start deps, and run united with hot rebuild using [air](https://github.com/air-verse/air)
-- Run `make test` to run a simple set of tests.  Check the output to make sure things are changing
+## Development
+
+```bash
+make devprep
+UNITED_STATE_MASTER_KEY="$(openssl rand -base64 32)" make run
+make test
+```
+
+`make run` starts United with local PocketBase data in `./pb_data` through Air. `make test` runs the standalone Terraform integration harness without cloud-service, distributed-lock, or reverse-proxy dependencies.
 
 ## Copyright
 
