@@ -32,3 +32,9 @@ Known unrelated validation debt:
 ## Fix round 1: shell regression coverage
 
 Added `tests/harness_regression_test.sh`, which is required by the `tests` Makefile before the integration lifecycle. It verifies the built binary rejects both removed CLI commands, runtime password generation has no static fallback/default in the harness, and the user/group provisioning and metadata inspection boundaries use PocketBase collection endpoints with bearer authentication. No production code or harness behavior changed. The target was first wired before the test script existed and failed with exit 127, then passed after the script was added.
+
+## Fix round 2: invocation-scoped bearer and master-key coverage
+
+Tightened the shell regression assertions so each protected collection curl invocation (`users`, `groups`, `states`, and `statefiles`) must contain its bearer header within the same curl command block. Password-auth endpoints are intentionally excluded. Added validation that `UNITED_STATE_MASTER_KEY` is generated exactly once with `openssl rand -base64 32`, while other uses only pass that generated value through rather than providing a static or default fallback. The new helper calls first failed because the helpers were absent, then passed after adding the test-only helpers. Production code and harness behavior remain unchanged.
+
+Round 2 validation passed `bash -n`, the shell regression target, `go test ./...`, `go vet ./...`, `pre-commit run --all-files`, `make test`, and `git --no-pager diff --check`. The standalone `golangci-lint run` remains blocked only by the pre-existing `state.go:340` `nlreturn` finding documented above.
