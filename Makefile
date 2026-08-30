@@ -19,5 +19,5 @@ run: build  ## Run United with PocketBase data in ./pb_data
 	@test -n "$${UNITED_STATE_MASTER_KEY:-}" || { echo "UNITED_STATE_MASTER_KEY must be a base64-encoded 32-byte key" >&2; exit 1; }
 	UNITED_STATE_MASTER_KEY="$${UNITED_STATE_MASTER_KEY}" ~/go/bin/air
 
-test: ## Run the standalone Terraform integration harness
+test: ## Run the standalone single-instance Terraform integration harness
 	$(MAKE) -C tests test

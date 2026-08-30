@@ -93,10 +93,11 @@ United does not automatically import or migrate state from an existing Terraform
 make devprep
 # Inject a previously provisioned persistent key through your shell or secret tool.
 make run
+go test ./...
 make test
 ```
 
-`make run` starts United with local PocketBase data in `./pb_data` through Air and requires the same previously provisioned `UNITED_STATE_MASTER_KEY` used for that data. `make test` runs the standalone Terraform integration harness with its own ephemeral test key and without cloud-service, distributed-lock, or reverse-proxy dependencies.
+`make run` starts United with local PocketBase data in `./pb_data` through Air and requires the same previously provisioned `UNITED_STATE_MASTER_KEY` used for that data. `go test ./...` runs Go unit tests and PocketBase collection API fixture scenarios. `make test` runs the standalone single-instance Terraform-client integration harness at `127.0.0.1:8090` with its own ephemeral test key and integration data directory, without cloud-service, distributed-lock, or reverse-proxy dependencies.
 
 ## Copyright
 
