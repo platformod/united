@@ -2,7 +2,11 @@
 
 package main
 
-import "github.com/pocketbase/pocketbase/core"
+import (
+	"net/http"
+
+	"github.com/pocketbase/pocketbase/core"
+)
 
 const basicAuthChallenge = `Basic realm="Authorization Required", charset="UTF-8"`
 
@@ -16,6 +20,10 @@ func requireGroupBasicAuth(next func(*core.RequestEvent, *core.Record) error) fu
 		group, err := e.App.FindFirstRecordByData("groups", "slug", e.Request.PathValue("group"))
 		if err != nil || username != group.GetString("username") || !group.ValidatePassword(password) {
 			return groupBasicAuthUnauthorized(e)
+		}
+
+		if !group.GetDateTime("deletedAt").IsZero() {
+			return e.NoContent(http.StatusGone)
 		}
 
 		e.Set("group", group)

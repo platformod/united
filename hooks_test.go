@@ -3,6 +3,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,6 +15,83 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGroupOwnerAPIRestrictsGroupManagementToItsOwner(t *testing.T) {
+	app := newTestApp(t)
+	handler := newTestHandler(t, app)
+	owner := createUser(t, app)
+	otherUser := createUserWithEmail(t, app, "other@example.test")
+	ownerToken := authenticateUser(t, handler, owner.GetString("email"))
+	otherToken := authenticateUser(t, handler, otherUser.GetString("email"))
+
+	created := requestJSONWithAuth(t, handler, http.MethodPost, "/api/collections/groups/records", map[string]string{
+		"email":           "platform-tf@terraform.invalid",
+		"username":        "platform-tf",
+		"password":        "correct horse",
+		"passwordConfirm": "correct horse",
+		"slug":            "platform",
+		"displayName":     "Platform",
+		"owner":           otherUser.Id,
+	}, ownerToken)
+	require.Equalf(t, http.StatusOK, created.Code, "response: %s", created.Body.String())
+
+	var group struct {
+		ID    string `json:"id"`
+		Owner string `json:"owner"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &group))
+	require.Equal(t, owner.Id, group.Owner)
+
+	list := requestWithAuth(t, handler, http.MethodGet, "/api/collections/groups/records", nil, ownerToken)
+	require.Equal(t, http.StatusOK, list.Code)
+	require.Contains(t, list.Body.String(), group.ID)
+
+	view := requestWithAuth(t, handler, http.MethodGet, "/api/collections/groups/records/"+group.ID, nil, ownerToken)
+	require.Equal(t, http.StatusOK, view.Code)
+
+	updated := requestJSONWithAuth(t, handler, http.MethodPatch, "/api/collections/groups/records/"+group.ID, map[string]string{"displayName": "Platform Engineering"}, ownerToken)
+	require.Equal(t, http.StatusOK, updated.Code)
+
+	otherList := requestWithAuth(t, handler, http.MethodGet, "/api/collections/groups/records", nil, otherToken)
+	require.Equal(t, http.StatusOK, otherList.Code)
+	require.NotContains(t, otherList.Body.String(), group.ID)
+
+	otherView := requestWithAuth(t, handler, http.MethodGet, "/api/collections/groups/records/"+group.ID, nil, otherToken)
+	require.Equal(t, http.StatusNotFound, otherView.Code)
+}
+
+func TestGroupSoftDeleteRetainsTheRecord(t *testing.T) {
+	app := newTestApp(t)
+	handler := newTestHandler(t, app)
+	owner := createUser(t, app)
+	group := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
+	token := authenticateUser(t, handler, owner.GetString("email"))
+
+	deleted := requestWithAuth(t, handler, http.MethodDelete, "/api/collections/groups/records/"+group.Id, nil, token)
+	require.Equal(t, http.StatusNoContent, deleted.Code)
+
+	tombstoned := findRecord(t, app, "groups", group.Id)
+	require.False(t, tombstoned.GetDateTime("deletedAt").IsZero())
+}
+
+func TestDeletedGroupCannotBeUpdatedOrRevivedThroughTheAPI(t *testing.T) {
+	app := newTestApp(t)
+	handler := newTestHandler(t, app)
+	owner := createUser(t, app)
+	group := createGroup(t, app, owner, "platform", "platform-tf", "correct horse")
+	token := authenticateUser(t, handler, owner.GetString("email"))
+
+	require.Equal(t, http.StatusNoContent, requestWithAuth(t, handler, http.MethodDelete, "/api/collections/groups/records/"+group.Id, nil, token).Code)
+
+	update := requestJSONWithAuth(t, handler, http.MethodPatch, "/api/collections/groups/records/"+group.Id, map[string]string{"displayName": "Revived"}, token)
+	require.NotEqual(t, http.StatusOK, update.Code)
+
+	revive := requestJSONWithAuth(t, handler, http.MethodPatch, "/api/collections/groups/records/"+group.Id, map[string]string{"deletedAt": ""}, token)
+	require.NotEqual(t, http.StatusOK, revive.Code)
+
+	tombstoned := findRecord(t, app, "groups", group.Id)
+	require.False(t, tombstoned.GetDateTime("deletedAt").IsZero())
+}
 
 func TestGroupCreationGeneratesKeyAndRejectsIdentityChanges(t *testing.T) {
 	app := newTestApp(t)
@@ -78,6 +159,45 @@ func TestStateLockFieldsMustBeAllEmptyOrAllPresent(t *testing.T) {
 	state = findRecord(t, app, "states", state.Id)
 	state.Set("lockID", "")
 	require.Error(t, app.Save(state))
+}
+
+func authenticateUser(t *testing.T, handler http.Handler, email string) string {
+	t.Helper()
+
+	response := requestJSONWithAuth(t, handler, http.MethodPost, "/api/collections/users/auth-with-password", map[string]string{
+		"identity": email,
+		"password": "correct horse",
+	}, "")
+	require.Equal(t, http.StatusOK, response.Code)
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.NotEmpty(t, result.Token)
+	return result.Token
+}
+
+func requestJSONWithAuth(t *testing.T, handler http.Handler, method, target string, payload any, token string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return requestWithAuth(t, handler, method, target, body, token)
+}
+
+func requestWithAuth(t *testing.T, handler http.Handler, method, target string, body []byte, token string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	request := httptest.NewRequest(method, target, bytes.NewReader(body))
+	if token != "" {
+		request.Header.Set("Authorization", token)
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 func createState(t *testing.T, app core.App, group *core.Record, name string) *core.Record {

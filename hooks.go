@@ -4,10 +4,12 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 func registerHooks(app core.App, cfg Config) {
@@ -37,10 +39,77 @@ func registerGroupHooks(app core.App, cfg Config) {
 					return errors.New("immutable group identity field changed")
 				}
 			}
+			if !e.Record.Original().GetDateTime("deletedAt").IsZero() {
+				return errors.New("deleted group cannot be modified")
+			}
 
 			return e.Next()
 		},
 	})
+
+	registerGroupRequestHooks(app)
+}
+
+func registerGroupRequestHooks(app core.App) {
+	app.OnRecordCreateRequest("groups").BindFunc(createGroupRequest)
+	app.OnRecordUpdateRequest("groups").BindFunc(updateGroupRequest)
+	app.OnRecordDeleteRequest("groups").BindFunc(deleteGroupRequest)
+}
+
+func createGroupRequest(e *core.RecordRequestEvent) error {
+	if err := requireGroupUser(e); err != nil {
+		return err
+	}
+
+	e.Record.Set("owner", e.Auth.Id)
+
+	return e.Next()
+}
+
+func updateGroupRequest(e *core.RecordRequestEvent) error {
+	if err := requireGroupOwner(e); err != nil {
+		return err
+	}
+
+	if !e.Record.GetDateTime("deletedAt").IsZero() {
+		return e.BadRequestError("Deleted group cannot be modified.", nil)
+	}
+
+	return e.Next()
+}
+
+func deleteGroupRequest(e *core.RecordRequestEvent) error {
+	if err := requireGroupOwner(e); err != nil {
+		return err
+	}
+
+	if !e.Record.GetDateTime("deletedAt").IsZero() {
+		return e.NoContent(http.StatusNoContent)
+	}
+
+	e.Record.Set("deletedAt", types.NowDateTime())
+
+	if err := e.App.Save(e.Record); err != nil {
+		return e.BadRequestError("Failed to delete group.", err)
+	}
+
+	return e.NoContent(http.StatusNoContent)
+}
+
+func requireGroupOwner(e *core.RecordRequestEvent) error {
+	if err := requireGroupUser(e); err != nil || e.Record.GetString("owner") != e.Auth.Id {
+		return e.ForbiddenError("Group ownership is required.", nil)
+	}
+
+	return nil
+}
+
+func requireGroupUser(e *core.RecordRequestEvent) error {
+	if e.Auth == nil || e.Auth.Collection().Name != "users" {
+		return e.ForbiddenError("User authentication is required.", nil)
+	}
+
+	return nil
 }
 
 func registerStateHooks(app core.App) {

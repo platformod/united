@@ -26,10 +26,16 @@ func newTestApp(t *testing.T) *pocketbase.PocketBase {
 func createUser(t *testing.T, app core.App) *core.Record {
 	t.Helper()
 
+	return createUserWithEmail(t, app, "owner@example.test")
+}
+
+func createUserWithEmail(t *testing.T, app core.App, email string) *core.Record {
+	t.Helper()
+
 	collection, err := app.FindCollectionByNameOrId("users")
 	require.NoError(t, err)
 	user := core.NewRecord(collection)
-	user.Set("email", "owner@example.test")
+	user.Set("email", email)
 	user.SetPassword("correct horse")
 	require.NoError(t, app.Save(user))
 	return user

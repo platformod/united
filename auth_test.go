@@ -24,6 +24,37 @@ func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
 	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
 }
 
+func TestDeletedGroupReturnsGoneOnlyAfterValidBasicAuth(t *testing.T) {
+	app, group, handler := newHTTPTestAppWithGroup(t)
+	group = findRecord(t, app, "groups", group.Id)
+	group.Set("deletedAt", "2026-08-30 00:00:00.000Z")
+	require.NoError(t, app.Save(group))
+
+	validCredentials := request(t, handler, http.MethodGet, stateURL(group, "network"), nil, group.GetString("username"), "correct horse")
+	require.Equal(t, http.StatusGone, validCredentials.Code)
+
+	for _, credentials := range []struct {
+		name     string
+		username string
+		password string
+	}{
+		{name: "unknown group", username: group.GetString("username"), password: "correct horse"},
+		{name: "wrong username", username: "wrong", password: "correct horse"},
+		{name: "wrong password", username: group.GetString("username"), password: "wrong"},
+	} {
+		t.Run(credentials.name, func(t *testing.T) {
+			target := stateURL(group, "network")
+			if credentials.name == "unknown group" {
+				target = "/state/unknown/network"
+			}
+
+			response := request(t, handler, http.MethodGet, target, nil, credentials.username, credentials.password)
+			require.Equal(t, http.StatusUnauthorized, response.Code)
+			require.Equal(t, basicAuthChallenge, response.Header().Get("WWW-Authenticate"))
+		})
+	}
+}
+
 func TestCrossGroupCredentialsCannotAccessAnotherGroupURL(t *testing.T) {
 	app, platform, handler := newHTTPTestAppWithGroup(t)
 	operations := createGroup(t, app, findRecord(t, app, "users", platform.GetString("owner")), "operations", "operations-tf", "correct horse")
