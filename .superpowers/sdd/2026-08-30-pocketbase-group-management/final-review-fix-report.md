@@ -33,3 +33,24 @@ The new slug and lock-integrity tests were added before the migration and hook i
 - Group route slugs and state `group/name` identities remain immutable.
 - The accepted native `terraform force-unlock` follow-up remains unchanged.
 - Brewfile cleanup remains deferred.
+
+## Final Fix Round 1
+
+### Delivered
+
+- Replaced the remaining static invalid Basic Auth password arguments in tests and the corresponding historical plan example with a value derived from the generated test password.
+- Made migration `1788134400_group_slug_constraint.go` forward-safe. Before applying its regex constraint, it enumerates group records through PocketBase record APIs and stops on the first invalid immutable route slug.
+- The migration failure identifies the blocking group record ID and slug and directs operators to migrate the Terraform state to a group with a safe slug; it never renames an existing route and executes no raw SQL.
+- Added a regression test that applies the prior migration set, persists an unsafe slug, and verifies that the target migration fails with the record ID and slug.
+
+### Validation
+
+| Command | Result |
+| --- | --- |
+| Focused forward-migration regression | Red before implementation; green after implementation. |
+| `go test ./...` | Passed. |
+| `go vet ./...` | Passed. |
+| `make build` | Passed. |
+| `make test` | Passed in an isolated local run. |
+| `pre-commit run --all-files` | Passed. |
+| Tracked static-password-literal scan | Passed; password field names and generated-value helper calls remain, but no static password values are tracked. |

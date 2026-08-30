@@ -44,6 +44,18 @@ func testPassword(t *testing.T) string {
 	return testPasswordValue
 }
 
+func invalidTestPassword(t *testing.T) string {
+	t.Helper()
+
+	return testPassword(t) + "-invalid"
+}
+
+func invalidTestUsername(t *testing.T) string {
+	t.Helper()
+
+	return "invalid-" + testPassword(t)
+}
+
 func createUser(t *testing.T, app core.App) *core.Record {
 	t.Helper()
 

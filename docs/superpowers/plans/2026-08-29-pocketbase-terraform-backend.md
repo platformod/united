@@ -311,7 +311,7 @@ Expected: PASS twice and no persistent `pb_data` is created in the repository ro
 ```go
 func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
     app, group := newHTTPTestAppWithGroup(t)
-    response := request(t, app, http.MethodGet, "/state/"+group.GetString("slug")+"/network", nil, "wrong", "password")
+    response := request(t, app, http.MethodGet, "/state/"+group.GetString("slug")+"/network", nil, invalidTestUsername(t), invalidTestPassword(t))
     require.Equal(t, http.StatusUnauthorized, response.Code)
     require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
 }

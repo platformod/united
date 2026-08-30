@@ -18,7 +18,7 @@ import (
 func TestStateRoutesRequireMatchingGroupCredentials(t *testing.T) {
 	_, group, handler := newHTTPTestAppWithGroup(t)
 
-	response := request(t, handler, http.MethodGet, "/state/"+group.GetString("slug")+"/network", nil, "wrong", "password")
+	response := request(t, handler, http.MethodGet, "/state/"+group.GetString("slug")+"/network", nil, invalidTestUsername(t), invalidTestPassword(t))
 
 	require.Equal(t, http.StatusUnauthorized, response.Code)
 	require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
@@ -39,8 +39,8 @@ func TestDeletedGroupReturnsGoneOnlyAfterValidBasicAuth(t *testing.T) {
 		password string
 	}{
 		{name: "unknown group", username: group.GetString("username"), password: testPassword(t)},
-		{name: "wrong username", username: "wrong", password: testPassword(t)},
-		{name: "wrong password", username: group.GetString("username"), password: "wrong"},
+		{name: "mismatched username", username: invalidTestUsername(t), password: testPassword(t)},
+		{name: "wrong password", username: group.GetString("username"), password: invalidTestPassword(t)},
 	} {
 		t.Run(credentials.name, func(t *testing.T) {
 			target := stateURL(group, "network")
@@ -87,7 +87,7 @@ func TestEveryStateRouteRequiresBasicAuth(t *testing.T) {
 
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete, "LOCK", "UNLOCK"} {
 		t.Run(method, func(t *testing.T) {
-			response := request(t, handler, method, "/state/"+group.GetString("slug")+"/network", nil, "wrong", "password")
+			response := request(t, handler, method, "/state/"+group.GetString("slug")+"/network", nil, invalidTestUsername(t), invalidTestPassword(t))
 
 			require.Equal(t, http.StatusUnauthorized, response.Code)
 			require.Equal(t, `Basic realm="Authorization Required", charset="UTF-8"`, response.Header().Get("WWW-Authenticate"))
