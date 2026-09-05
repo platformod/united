@@ -3,7 +3,7 @@ air = "1.67.4"
 go = "1.27.1"
 golangci-lint = "2.12.2"
 goreleaser = "2.17.1"
-hk = "1.56.0"
+hk = "1.56.1"
 terraform = "1.16.1"
 
 [env]
