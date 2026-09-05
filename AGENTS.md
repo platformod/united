@@ -25,10 +25,10 @@ Run commands from the repository root.
 
 ```bash
 # Install the project tooling and local prerequisites
-make devprep
+mise install && mise use
 
 # Build the binary
-make build
+misew run build
 
 # Start Docker dependencies, configure LocalStack, and run with Air
 make run
@@ -37,7 +37,7 @@ make run
 make test
 ```
 
-`make run` expects Docker, AWS CLI, `jq`, and a configured `localstack` AWS profile. The local defaults use Redis at `localhost:6379`, LocalStack at `localhost:4566`, bucket `united-test`, and KMS alias `alias/united-test`. The test harness uses the Terraform version in `.terraform-version` and its defaults are defined in `tests/Makefile`.
+`make run` expects Docker, AWS CLI, `jq`, and a configured `localstack` AWS profile. The local defaults use Redis at `localhost:6379`, LocalStack at `localhost:4566`, bucket `united-test`, and KMS alias `alias/united-test`. The test harness uses the Terraform version in mise.toml and its defaults are defined in `tests/Makefile`.
 
 To stop the local dependencies:
 
