@@ -1,0 +1,31 @@
+amends "package://github.com/jdx/hk/releases/download/v1.53.0/hk@1.53.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.53.0/hk@1.53.0#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+  ["check-added-large-files"] = (Builtins.check_added_large_files)
+  ["check-merge-conflict"] = (Builtins.check_merge_conflict)
+  ["check-case-conflict"] = (Builtins.check_case_conflict)
+  ["check-executables-have-shebangs"] = (Builtins.check_executables_have_shebangs)
+  ["detect-private-key"] = (Builtins.detect_private_key)
+  ["end-of-file"] = (Builtins.newlines)
+  ["trailing-whitespace"] = (Builtins.trailing_whitespace)
+  ["mixed-line-ending"] = (Builtins.mixed_line_ending)
+  ["gomod-tidy"] = (Builtins.gomod_tidy)
+  ["golangci-lint"] {
+    check = "mise run lint"
+    glob = List("**/*.go", "go.mod", "go.sum")
+    exclusive = true
+  }
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps = linters
+  }
+  ["check"] {
+    fix = false
+    steps = linters
+  }
+}
