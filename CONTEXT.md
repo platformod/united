@@ -8,6 +8,46 @@ United stores and coordinates Terraform state for independently administered gro
 A tenant boundary with an immutable identity that owns one namespace of logical Terraform states and one shared Terraform credential.
 _Avoid_: Tenant, organization, account
 
+**Logical state**:
+A named Terraform state lineage whose identity remains permanently bound to one group and state name.
+_Avoid_: State version, state path
+
+**State document**:
+The opaque content supplied by Terraform and returned byte-for-byte without interpretation or modification by United.
+_Avoid_: State metadata, normalized state
+
+**State version**:
+An immutable historical snapshot belonging to one logical state; exactly one version is current while that state is active, and every other version is non-current.
+_Avoid_: Logical state, current state
+
+**Non-current version**:
+A state version that has been superseded or belonged to a logical state when it was tombstoned, making it subject to the group retention policy from that time.
+_Avoid_: Tombstoned state, purged state
+
+**Cleanup-eligible version**:
+A non-current version older than the group retention policy that remains visible and accessible until cleanup removes it; a policy change may make it ineligible again before removal.
+_Avoid_: Expired version, claimed version, purged version
+
+**Purged version**:
+A state version whose authoritative metadata and content association have been permanently removed, making its state document inaccessible.
+_Avoid_: Cleanup-eligible version, tombstoned state
+
+**Tombstoned state**:
+A recoverable logical state that is absent through the Terraform API while its identity remains reserved and its latest non-current version remains retained by the group retention policy.
+_Avoid_: Purged state, deleted state
+
+**Purged state**:
+A logical state with no retained versions remaining under the group retention policy while its identity remains permanently reserved.
+_Avoid_: Tombstoned state, reusable state name
+
+**Group retention policy**:
+The owner-controlled, service-bounded age threshold at which cleanup may purge a non-current version, measured from when that version ceased to be current.
+_Avoid_: Stored deadline, group retirement, manual purge
+
+**State restoration**:
+An owner action that returns a tombstoned state to active use with its latest retained version as current.
+_Avoid_: Path reuse, rollback
+
 **Suspended group**:
 A group whose state data plane is frozen while limited owner controls remain available for remediation.
 _Avoid_: Deleted group, read-only group
