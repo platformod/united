@@ -1,8 +1,10 @@
 [tools]
+air = "1.67.4"
 go = "1.27.1"
 golangci-lint = "2.12.2"
 goreleaser = "2.17.1"
 hk = "1.56.0"
+terraform = "1.16.1"
 
 [env]
 HK_MISE = 1
@@ -11,7 +13,7 @@ HK_MISE = 1
 postinstall = "hk install --mise"
 
 [tasks.build]
-run = "go build -o dist/tgo"
+run = "go build -o dist/united"
 
 [tasks.test]
 run = "go test ./..."

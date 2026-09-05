@@ -11,15 +11,6 @@ endif
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-build: *.go  ## Builds the program
-	go build -o dist/united
-
-devprep: ## Installs all dev tools you need
-	brew bundle install
-	tfenv install
-	pre-commit install
-	go install github.com/air-verse/air@latest
-
 runtime: ## Run Docker deps
 	docker compose up --quiet-pull -d
 	sleep 2
