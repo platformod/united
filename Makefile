@@ -26,9 +26,7 @@ down: ## Down compose
 	docker compose down
 
 build:
-ifdef DEV
 	mise run build
-endif
 
 run: build runtime setup-localstack  ## Run united devmode
 	DEV="true" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
