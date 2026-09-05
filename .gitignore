@@ -30,3 +30,6 @@ go.work
 
 # goreleaser out dir
 dist/
+
+# Sandboxed agents like to make a local cachedir
+.cache

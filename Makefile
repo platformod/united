@@ -3,6 +3,9 @@
 .SHELLFLAGS := -c
 .SHELL := bash
 
+AWS_PROFILE ?= localstack
+export AWS_PROFILE
+
 run = ~/go/bin/air
 ifdef CI
 	run = ./dist/united &
@@ -22,8 +25,13 @@ setup-localstack: ## Setup up localstack
 down: ## Down compose
 	docker compose down
 
+build:
+ifdef DEV
+	mise run build
+endif
+
 run: build runtime setup-localstack  ## Run united devmode
-	DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
+	DEV="true" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
 
 test: ## Run tests in tests/ dir
 	$(MAKE) -C tests
