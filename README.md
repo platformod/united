@@ -1,6 +1,6 @@
 # United: A multitenant Terraform HTTP backend server
 
-Designed to be run alongside [Atlantis](https://www.runatlantis.io/), United offers a simple to configure HTTP backend with locking, encryption, and flexible pass though authentication.  
+Designed to be run alongside [Atlantis](https://www.runatlantis.io/), United offers a simple to configure HTTP backend with locking, encryption, and flexible pass though authentication.
 
 You would want to use this in situations where you have many teams with many statefiles and and consistent management of them across the platform/org/agency has become a burden.
 

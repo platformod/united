@@ -1,0 +1,34 @@
+[tools]
+air = "1.67.4"
+go = "1.27.1"
+golangci-lint = "2.12.2"
+goreleaser = "2.17.1"
+hk = "1.56.0"
+terraform = "1.16.1"
+
+[env]
+HK_MISE = 1
+
+[hooks]
+postinstall = "hk install --mise"
+
+[tasks.build]
+run = "go build -o dist/united"
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.lint]
+run = "golangci-lint run ./..."
+
+[tasks.check]
+run = "hk run check --all --check"
+
+[tasks."check:ci"]
+run = "hk run check --all --check --skip-step golangci-lint"
+
+[tasks.release]
+run = "goreleaser release --clean"
+
+[tasks.pr-title]
+run = ".mise/tasks/pr-title"

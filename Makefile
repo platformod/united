@@ -3,6 +3,9 @@
 .SHELLFLAGS := -c
 .SHELL := bash
 
+AWS_PROFILE ?= localstack
+export AWS_PROFILE
+
 run = ~/go/bin/air
 ifdef CI
 	run = ./dist/united &
@@ -10,15 +13,6 @@ endif
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
-
-build: *.go  ## Builds the program
-	go build -o dist/united
-
-devprep: ## Installs all dev tools you need
-	brew bundle install
-	tfenv install
-	pre-commit install
-	go install github.com/air-verse/air@latest
 
 runtime: ## Run Docker deps
 	docker compose up --quiet-pull -d
@@ -31,8 +25,11 @@ setup-localstack: ## Setup up localstack
 down: ## Down compose
 	docker compose down
 
+build:
+	mise run build
+
 run: build runtime setup-localstack  ## Run united devmode
-	DEV="true" AWS_PROFILE="localstack" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
+	DEV="true" BUCKET="united-test" KEY_ARN="alias/united-test" AUTH_URL="http://localhost:8085/united-test" $(run)
 
 test: ## Run tests in tests/ dir
 	$(MAKE) -C tests

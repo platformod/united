@@ -61,6 +61,7 @@ func getHandler(c *gin.Context) {
 	}
 
 	defer o.Body.Close()
+
 	contentLength, _ := strconv.Atoi(o.Metadata["x-amz-unencrypted-content-length"])
 	c.DataFromReader(http.StatusOK, int64(contentLength), *o.ContentType, o.Body, nil)
 }
@@ -115,6 +116,7 @@ func postHandler(c *gin.Context) {
 	}
 
 	body, _ := io.ReadAll(c.Request.Body)
+
 	_, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.Bucket),
 		Key:         aws.String(filePath),
@@ -122,7 +124,6 @@ func postHandler(c *gin.Context) {
 		ContentType: aws.String("application/json"),
 		Metadata:    map[string]string{"x-united-user": c.MustGet("user").(string)},
 	})
-
 	if err != nil {
 		//nolint:errcheck
 		c.Error(err)
@@ -143,7 +144,6 @@ func deleteHandler(c *gin.Context) {
 		Bucket: aws.String(cfg.Bucket),
 		Key:    aws.String(filePath),
 	})
-
 	if err != nil {
 		//nolint:errcheck
 		c.Error(err)
