@@ -37,9 +37,17 @@ The non-owning group role assigned to an accepted group participant.
 _Avoid_: User
 
 **Terraform credential**:
-The single machine credential shared by Terraform clients acting within one group.
+The group-bound machine identity shared by Terraform clients, consisting of an immutable public username and a secret known only at issuance.
 _Avoid_: User credential, membership
+
+**Disabled credential**:
+A Terraform credential temporarily barred from authenticating while retaining the same username and secret for possible reactivation.
+_Avoid_: Rotated credential, suspended group
 
 **System operator**:
 A global administrator responsible for service-level suspension and exceptional recovery without belonging to groups.
 _Avoid_: Owner, member
+
+**Security audit event**:
+An immutable record of a security-significant administrative action, available only to system operators.
+_Avoid_: Request log, metric
