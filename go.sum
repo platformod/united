@@ -2,6 +2,7 @@ github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01 h1:GHwYgY6
 github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01/go.mod h1:vZ/F780spvlix7Qg0/17Uj0SayI+CqtybQHtPEV9RTE=
 github.com/aws/amazon-s3-encryption-client-go/v3 v3.2.1 h1:P/7XuRDGjrOIhzr4wnRcSqeMQB8v4oZwzxzhJgI1Njk=
 github.com/aws/amazon-s3-encryption-client-go/v3 v3.2.1/go.mod h1:k/WQiWAouhMQHIuaTsgn/STAkEVHusoKdo9DdFe1dw4=
+github.com/aws/amazon-s3-encryption-client-go/v4 v4.0.1/go.mod h1:ffiGxpvnBTnr7l4evAkZ+Qtsoi2Ll9pj4qc3okZsvM0=
 github.com/aws/aws-sdk-go-v2 v1.46.0 h1:1kt7m/EKcEHt5mlyyxx9cSlMddRPIKbjb6DIQsu4HPk=
 github.com/aws/aws-sdk-go-v2 v1.46.0/go.mod h1:bttEH6JqnUL8LepvDVfdrds/fZ5bCIxzpe3abyUrhDU=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 h1:GPRlPwz40I2B2VrBEASOA3Bi77NyeqejNLkifosX0rs=
