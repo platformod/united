@@ -53,8 +53,16 @@ A group whose state data plane is frozen while limited owner controls remain ava
 _Avoid_: Deleted group, read-only group
 
 **Pending retirement**:
-A reversible group status entered when an owner requests deletion, freezing the state data plane until cancellation or eventual operator-authorized purge.
-_Avoid_: Suspended group, deleted group
+A reversible group status entered when an active-group owner, or a system operator for a suspended group, requests retirement, freezing the state data plane until cancellation or automatic purge; owners may cancel whenever the group is not retirement-eligible.
+_Avoid_: Suspended group, retired group
+
+**Retirement-eligible group**:
+A group that has remained in pending retirement longer than its current group retention policy and may be automatically purged unless a policy extension or cancellation commits first; only a system operator may cancel while the group remains eligible.
+_Avoid_: Pending retirement, cleanup-eligible version, retired group
+
+**Retired group**:
+A permanently purged group represented only by its reserved immutable machine identity and original creation, latest retirement request, and completed purge timestamps after its namespace, access relationships, credential, mutable display name, key material, and state history have been removed.
+_Avoid_: Pending retirement, suspended group, purged state
 
 **User**:
 A human identity that may belong to multiple groups through separate memberships.
@@ -77,8 +85,8 @@ The non-owning group role assigned to an accepted group participant.
 _Avoid_: User
 
 **Terraform credential**:
-The group-bound machine identity shared by Terraform clients, consisting of an immutable public username and a secret known only at issuance.
-_Avoid_: User credential, membership
+The group-bound machine identity shared by Terraform clients, consisting of a public username that remains permanently reserved and a secret known only at issuance.
+_Avoid_: User credential, membership, reusable username
 
 **Disabled credential**:
 A Terraform credential temporarily barred from authenticating while retaining the same username and secret for possible reactivation.
@@ -89,5 +97,5 @@ A global administrator responsible for service-level suspension and exceptional 
 _Avoid_: Owner, member
 
 **Security audit event**:
-An immutable record of a security-significant administrative action, available only to system operators.
+An immutable, permanently retained record of a security-significant administrative action, available only to system operators and preserved after group retirement.
 _Avoid_: Request log, metric
