@@ -9,8 +9,12 @@ A tenant boundary with an immutable identity that owns one namespace of logical 
 _Avoid_: Tenant, organization, account
 
 **Logical state**:
-A named Terraform state lineage whose identity remains permanently bound to one group and state name.
+A permanently reserved Terraform state lineage whose identity is established for one group and state name by its first successful lock or state write, even when no state document has yet been published.
 _Avoid_: State version, state path
+
+**State name**:
+A group-scoped lowercase ASCII route identifier that permanently names one logical state and permits only letters, digits, dots, underscores, and hyphens.
+_Avoid_: Display name, storage path, filename
 
 **State document**:
 The opaque content supplied by Terraform and returned byte-for-byte without interpretation or modification by United.
@@ -20,9 +24,21 @@ _Avoid_: State metadata, normalized state
 The exact plaintext byte count and SHA-256 digest recorded when United receives a state document and required to match after every successful decryption; it verifies content but never identifies or deduplicates a state.
 _Avoid_: HTTP Content-Length, state identity, ciphertext metadata
 
+**Encrypted state object**:
+The immutable stored ciphertext produced from one state document for a prospective state version; it becomes authoritative only when referenced by committed state-version metadata.
+_Avoid_: State document, state version, database record
+
+**Orphaned state object**:
+An encrypted state object not referenced by authoritative state-version metadata, giving it no state semantics and making it eligible for physical removal.
+_Avoid_: Non-current version, purged version, missing state object
+
 **State version**:
-An immutable historical snapshot belonging to one logical state; exactly one version is current while that state is active, and every other version is non-current.
+A published immutable historical snapshot belonging to one logical state; exactly one version is current while that state is active, and every other version is non-current.
 _Avoid_: Logical state, current state
+
+**Current version pointer**:
+A logical state's reference to the last state version it selected; it is served while the state is active, remains the sole restoration target while tombstoned, and is cleared rather than reassigned when that version is purged.
+_Avoid_: Latest retained version, version sequence, fallback version
 
 **Non-current version**:
 A state version that has been superseded or belonged to a logical state when it was tombstoned, making it subject to the group retention policy from that time.
@@ -37,19 +53,23 @@ A state version whose authoritative metadata and content association have been p
 _Avoid_: Cleanup-eligible version, tombstoned state
 
 **Tombstoned state**:
-A recoverable logical state that is absent through the Terraform API while its identity remains reserved and its latest non-current version remains retained by the group retention policy.
+A logical state that is absent through the Terraform API while its identity remains reserved; its retained former current version is its sole restoration target until cleanup removes it, and older versions never substitute.
 _Avoid_: Purged state, deleted state
 
 **Purged state**:
 A logical state with no retained versions remaining under the group retention policy while its identity remains permanently reserved.
 _Avoid_: Tombstoned state, reusable state name
 
+**Empty logical state**:
+A permanently reserved logical state established by an initial lock but having no published state version; it remains absent through the Terraform read API until its first successful write.
+_Avoid_: Tombstoned state, purged state, unused path
+
 **Group retention policy**:
 The owner-controlled, service-bounded age threshold at which cleanup may purge a non-current version, measured from when that version ceased to be current.
 _Avoid_: Stored deadline, group retirement, manual purge
 
 **State restoration**:
-An owner action that returns a tombstoned state to active use with its latest retained version as current.
+An owner action that returns a tombstoned logical state to use by making its retained former current version current or, for a never-published lineage, returning it to empty.
 _Avoid_: Path reuse, rollback
 
 **Lock lease**:
@@ -137,5 +157,5 @@ Permanent removal of a group's protected data key, making any residual encrypted
 _Avoid_: Physical object deletion, tombstoning, key rotation
 
 **Security audit event**:
-An immutable, permanently retained record of a security-significant administrative action, available only to system operators and preserved after group retirement.
+An immutable, permanently retained record of a security-significant administrative action or state-authority transition, available only to system operators and preserved after group retirement.
 _Avoid_: Request log, metric
