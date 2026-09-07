@@ -52,6 +52,18 @@ _Avoid_: Stored deadline, group retirement, manual purge
 An owner action that returns a tombstoned state to active use with its latest retained version as current.
 _Avoid_: Path reuse, rollback
 
+**Lock lease**:
+A time-bounded exclusive claim by one Terraform operation over one logical state, identified by the operation's opaque lock ID and recoverable through expiry.
+_Avoid_: Database lock, indefinite lock, user lock
+
+**Terraform lock payload**:
+The complete client-supplied description of a lock lease, whose opaque ID establishes operation ownership while its remaining fields provide unverified diagnostics returned to competing Terraform clients.
+_Avoid_: Authenticated user identity, security audit event, server-generated lock
+
+**Expired lock lease**:
+A lock lease whose expiry has passed and therefore cannot admit a new protected operation or exclude a new acquisition, though an authoritative mutation admitted while it was live may finish.
+_Avoid_: Active lock, retained lock, cleanup-eligible lock
+
 **Suspended group**:
 A group whose state data plane is frozen while limited owner controls remain available for remediation.
 _Avoid_: Deleted group, read-only group
