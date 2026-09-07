@@ -28,7 +28,7 @@ Run commands from the repository root.
 mise install && mise use
 
 # Build the binary
-misew run build
+mise run build
 
 # Start Docker dependencies, configure LocalStack, and run with Air
 make run
@@ -72,6 +72,8 @@ When changing configuration or request handling:
 
 ## Working agreements
 
+- Use idomatic language constructs
+- Keep It Simple.  Don't overthink or solve for hypothetical problems.
 - Read `CONTEXT.md` and relevant ADRs before making domain or architectural changes; these files may be created lazily and are allowed to be absent.
 - Prefer small, focused changes that follow the existing Go and Makefile patterns.
 - Preserve the MPL-2.0 license headers in source files.
