@@ -16,6 +16,10 @@ _Avoid_: State version, state path
 The opaque content supplied by Terraform and returned byte-for-byte without interpretation or modification by United.
 _Avoid_: State metadata, normalized state
 
+**State integrity metadata**:
+The exact plaintext byte count and SHA-256 digest recorded when United receives a state document and required to match after every successful decryption; it verifies content but never identifies or deduplicates a state.
+_Avoid_: HTTP Content-Length, state identity, ciphertext metadata
+
 **State version**:
 An immutable historical snapshot belonging to one logical state; exactly one version is current while that state is active, and every other version is non-current.
 _Avoid_: Logical state, current state
@@ -95,6 +99,30 @@ _Avoid_: Rotated credential, suspended group
 **System operator**:
 A global administrator responsible for service-level suspension and exceptional recovery without belonging to groups.
 _Avoid_: Owner, member
+
+**Runtime master key**:
+The deployment-held secret that protects every operational group's data key, is never persisted with application data, and whose loss makes all retained state documents permanently inaccessible.
+_Avoid_: Group data key, Terraform credential
+
+**Master-key generation**:
+The informational ordinal stored with application data that begins at one and advances only when a completed rekey replaces the runtime master key; it helps operators associate backups with externally retained keys but does not validate key compatibility.
+_Avoid_: Key identifier, backup generation, group data-key version
+
+**Group data key**:
+A secret created with a group and retained for its operational lifetime that protects the group's state documents while itself remaining protected by the runtime master key.
+_Avoid_: Runtime master key, Terraform credential, per-version key
+
+**Global rekey**:
+An offline, all-or-nothing replacement of the runtime master key that re-protects every non-retired group's existing data key and advances the master-key generation without rewriting state documents.
+_Avoid_: Group-key repair, group data-key rotation, state re-encryption
+
+**Group-key repair**:
+An exceptional offline re-protection of one non-retired group's existing data key using operator-supplied old and current runtime master keys, without advancing the master-key generation or restoring retired key material.
+_Avoid_: Global rekey, group data-key rotation, retired-group recovery
+
+**Cryptographic erasure**:
+Permanent removal of a group's protected data key, making any residual encrypted state documents inaccessible without requiring their physical removal to succeed first.
+_Avoid_: Physical object deletion, tombstoning, key rotation
 
 **Security audit event**:
 An immutable, permanently retained record of a security-significant administrative action, available only to system operators and preserved after group retirement.
