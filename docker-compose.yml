@@ -7,7 +7,7 @@ services:
     volumes:
       - ./tests/nginx.conf:/etc/nginx/nginx.conf:ro
   redis:
-    image: redis:8.10-alpine@sha256:bd999b5cfee25fb24b8320a31fddbd69f462df44c8138c66e369582937beebc0
+    image: redis:8.10-alpine@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79
     restart: always
     ports:
       - "6379:6379"
