@@ -17,7 +17,6 @@ require (
 	github.com/go-playground/validator/v10 v10.30.4
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rs/zerolog v1.35.1
-	github.com/sethvargo/go-envconfig v1.4.3
 	github.com/sethvargo/go-envconfig/v2 v2.0.0
 )
 
