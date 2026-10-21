@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.111.0
 	github.com/aws/smithy-go v1.28.5
 	github.com/bsm/redislock v0.10.0
-	github.com/gin-contrib/logger v1.2.8
+	github.com/gin-contrib/logger v1.2.9
 	github.com/gin-contrib/requestid v1.0.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.5
