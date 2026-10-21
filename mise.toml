@@ -1,6 +1,6 @@
 [tools]
 air = "1.67.4"
-go = "1.27.1"
+go = "1.27.3"
 golangci-lint = "2.14.0"
 goreleaser = "2.18.2"
 hk = "1.58.1"
