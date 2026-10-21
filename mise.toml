@@ -4,7 +4,7 @@ go = "1.27.3"
 golangci-lint = "2.15.0"
 goreleaser = "2.18.3"
 hk = "2.8.0"
-terraform = "1.16.6"
+terraform = "1.17.0"
 
 [env]
 HK_MISE = 1
