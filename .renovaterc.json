@@ -24,7 +24,7 @@
   ],
   "automergeSchedule": ["every weekend"],
   "platformAutomerge": true,
-  "postUpdateOptions": ["gomod-tidy"],
+  "postUpdateOptions": ["gomodTidy"],
   "prConcurrentLimit": 10,
   "separateMinorPatch": true,
   "timezone": "America/Los_Angeles"
