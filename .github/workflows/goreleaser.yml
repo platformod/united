@@ -23,7 +23,7 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d  # v5.2.4
         with:
-          version: 2026.10.23
+          version: 2026.10.24
           install: true
       - name: Docker Login
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
