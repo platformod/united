@@ -1,6 +1,6 @@
 module github.com/platformod/united
 
-go 1.26.2
+go 1.26.10
 
 require (
 	github.com/RaMin0/gin-health-check v0.0.0-20180807004848-a677317b3f01
@@ -12,7 +12,7 @@ require (
 	github.com/aws/smithy-go v1.28.7
 	github.com/bsm/redislock v0.10.0
 	github.com/gin-contrib/logger v1.2.9
-	github.com/gin-contrib/requestid v1.0.8
+	github.com/gin-contrib/requestid v1.0.9
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/redis/go-redis/v9 v9.23.0
@@ -63,7 +63,7 @@ require (
 	go.uber.org/atomic v1.12.0 // indirect
 	golang.org/x/arch v0.29.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
