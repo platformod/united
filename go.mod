@@ -12,7 +12,7 @@ require (
 	github.com/aws/smithy-go v1.28.8
 	github.com/bsm/redislock v0.10.0
 	github.com/gin-contrib/logger v1.2.10
-	github.com/gin-contrib/requestid v1.0.9
+	github.com/gin-contrib/requestid v1.0.10
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/redis/go-redis/v9 v9.23.0
@@ -63,7 +63,7 @@ require (
 	go.uber.org/atomic v1.12.0 // indirect
 	golang.org/x/arch v0.29.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
