@@ -79,6 +79,7 @@ When changing configuration or request handling:
 - Preserve the MPL-2.0 license headers in source files.
 - Do not commit generated binaries, local Terraform state, credentials, or dependency caches.
 - Use GitHub Issues as the source of work items and interact with them through `gh`; see [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+- Run research loops in subagents and bring back only the findings, keeping the main session's context focused on decisions and edits.
 - When validation depends on Docker, AWS, Terraform, or external services, report what was and was not run rather than treating a partial check as complete.
 
 ## Agent skills
