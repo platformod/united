@@ -104,6 +104,10 @@ _Avoid_: Pending retirement, suspended group, purged state
 A human identity that may belong to multiple groups through separate memberships.
 _Avoid_: Member, operator
 
+**Deactivated user**:
+A user whose authentication is barred while their memberships and pending invitations remain intact; reactivation restores access.
+_Avoid_: Disabled account, suspended user, removed member
+
 **Membership**:
 The association between a user and a group, carrying exactly one group role after an invitation is accepted.
 _Avoid_: Group user
