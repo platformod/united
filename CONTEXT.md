@@ -32,6 +32,14 @@ _Avoid_: State document, state version, database record
 An encrypted state object not referenced by authoritative state-version metadata, giving it no state semantics and making it eligible for physical removal.
 _Avoid_: Non-current version, purged version, missing state object
 
+**Orphan reconciliation**:
+The scheduled comparison of stored objects in the state-version namespace against committed version metadata, deleting only unreferenced objects that exceed the age guard and pass the mass-deletion brake.
+_Avoid_: State integrity scan, garbage collection, cleanup-eligible version
+
+**Reconciliation brake**:
+A safety stop that aborts orphan deletion when the candidate set is implausibly large relative to the objects listed, cleared only by an explicit offline forced run.
+_Avoid_: Dry run, manual approval, retention policy
+
 **State version**:
 A published immutable historical snapshot belonging to one logical state; exactly one version is current while that state is active, and every other version is non-current.
 _Avoid_: Logical state, current state
