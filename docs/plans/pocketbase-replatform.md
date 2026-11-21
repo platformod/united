@@ -19,12 +19,16 @@
 - `UNITED_LOCK_LEASE_DURATION` uses Go duration syntax, defaults to `35m`, and must be between `5m` and `24h`.
 - State names are one URL segment, normalized to lowercase, and match `^[a-z0-9][a-z0-9._-]{0,254}$`.
 - The Terraform contract accepts `GET`, `POST`, `PUT`, `DELETE`, `LOCK`, and `UNLOCK` at `/state/{group}/{name}`; every other method returns `405` with `Allow`.
-- `401` for every authentication failure, `403` only for a valid route-bound credential whose group is suspended or pending retirement, `409` for lock-ID mismatches, `423` with the exact stored lock JSON for live contention, `410` for `LOCK` on tombstoned or purged states.
+- `401` for every authentication failure, `403` only for a valid route-bound credential whose group is suspended or pending retirement, `409` for lock-ID mismatches and for writes to tombstoned states, `423` with the exact stored lock JSON for live contention, `410` for `LOCK` on tombstoned or purged states and for any write to a purged state.
 - Never emit state documents, credentials, passwords, bcrypt hashes, lock IDs, `Who`, raw lock JSON, master keys, group data keys, wrapped keys, ciphertext, request bodies, SQL parameters, or state digests in logs or errors.
 - All source files carry the MPL-2.0 header.
 - One active process and one writer. No clustering, leader election, dual-run, dual-write, or compatibility shim.
 - Every slice merges green: `go build ./...`, `go test ./...`, `golangci-lint run ./...`, and `mise run check:ci`.
-- A `depguard` rule denies `github.com/pocketbase/pocketbase` from `internal/config`, `internal/apperr`, `internal/telemetry`, `internal/crypto`, and `internal/state`.
+- A `depguard` rule denies `github.com/pocketbase/pocketbase` from `internal/config`, `internal/apperr`, `internal/telemetry`, `internal/crypto`, and `internal/state`, with one exception: `internal/crypto` may import `github.com/pocketbase/pocketbase/tools/security` (ADR 0002).
+- A successful state write extends its live lease to `max(current expiry, now + effective duration)`; it never shortens a lease and never revives an expired one. Reads, `LOCK` replays, and `UNLOCK` never extend (ADR 0002).
+- `HEAD` and `OPTIONS` on state routes return `405` with `Allow`; the CORS middleware is unbound on the state route group.
+- Custom state routes bind `apis.BodyLimit` to the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB of overhead. PocketBase's 32 MiB default body limit is not the state limit.
+- Superusers are trusted. No collection rule, hook, or hidden field is a containment boundary against a superuser; validators exist for data correctness and accident prevention only (ADR 0002).
 
 ## Review Focus
 
@@ -118,7 +122,12 @@ type Config struct {
 	LockLeaseDuration   time.Duration
 	Actor               string
 }
-func Load(ctx context.Context) (*Config, error)
+type Mode int
+const (
+	ModeServe Mode = iota
+	ModeCommand
+)
+func Load(ctx context.Context, mode Mode) (*Config, error)
 
 // internal/apperr
 type Class string
@@ -186,7 +195,7 @@ func Acquire(existing *Lease, req LockRequest, now time.Time, d time.Duration) (
 func Release(existing *Lease, id string, now time.Time) LockOutcome
 func NormalizeName(s string) (string, error)
 func CanTransition(from, to Status) bool
-func RetentionEligible(nonCurrentAt, now time.Time, days int) bool
+func RetentionEligible(nonCurrentAt *time.Time, now time.Time, days int) bool
 type Clock interface {
 	Now() time.Time
 }
@@ -517,7 +526,7 @@ git commit -m "feat(telemetry): add optional OTel setup with autoexport"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestParseMasterKey`, `TestSentinelRoundTrip`, `TestSentinelRejectsWrongKey`, `TestGroupKeyRoundTrip`, `TestWrapRejectsWrongMaster`, `TestEncryptDecryptRoundTrip`, `TestDecryptRejectsTamper`, `TestEncryptUsesBase64Text`.
+Test names: `TestParseMasterKey`, `TestSentinelRoundTrip`, `TestSentinelRejectsWrongKey`, `TestGroupKeyRoundTrip`, `TestWrapRejectsWrongMaster`, `TestEncryptDecryptRoundTrip`, `TestDecryptRejectsTamper`, `TestEncryptUsesBase64Text`, `TestEncryptRejectsWrongKeyLength`, `TestDecryptRejectsShortCiphertext`.
 
 Assertions:
 - `ParseMasterKey` accepts base64 of 32 bytes and rejects 31/33 bytes and non-base64.
@@ -527,6 +536,8 @@ Assertions:
 - `EncryptState` returns standard base64 text that decodes; `DecryptState` returns the exact plaintext bytes.
 - A one-byte change anywhere in the ciphertext makes `DecryptState` fail.
 - `EncryptState` output never contains the plaintext.
+- `EncryptState` and `DecryptState` reject keys whose decoded length is not exactly 32 bytes.
+- `DecryptState` returns an error, never a panic, for empty or nonce-truncated ciphertext.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -535,7 +546,9 @@ Expected: FAIL because the package does not exist.
 
 - [ ] **Step 3: Implement the crypto package**
 
-Use `github.com/pocketbase/pocketbase/tools/security` for `Encrypt`, `Decrypt`, and `RandomString`. `ParseMasterKey` uses `base64.StdEncoding.DecodeString`. `NewGroupKey` uses `security.RandomString(32)`. Do not define a competing cipher or associated-data scheme.
+Use `github.com/pocketbase/pocketbase/tools/security` for `Encrypt`, `Decrypt`, and `RandomString`. This is the only PocketBase import allowed in this package (ADR 0002). `ParseMasterKey` uses `base64.StdEncoding.DecodeString`. `NewGroupKey` uses `security.RandomString(32)`. Do not define a competing cipher or associated-data scheme.
+
+`security.Encrypt` accepts 16-, 24-, or 32-byte keys and silently selects AES-128/192/256, so both wrappers reject any key whose decoded length is not 32. `security.Decrypt` slices the first 12 bytes without a length check and panics on short input, so `DecryptState` and `UnwrapGroupKey` length-check the decoded ciphertext before calling it and return an `apperr.ClassCrypto` error instead.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -602,14 +615,18 @@ git commit -m "feat(state): add state names, lifecycle, retention, and lease dom
 
 - [ ] **Step 1: Write the failing schema test**
 
+Test name: `TestMigrationSchema`.
+
 Use `tests.NewTestApp(t.TempDir())` from `github.com/pocketbase/pocketbase/tests`, then assert:
 
 - Collections exist: `groups`, `group_memberships`, `group_invitations`, `terraform_credentials`, `logical_states`, `state_versions`, `audit_events`, `system_settings`, `retired_groups`.
 - `terraform_credentials.password` is a `PasswordField` with `Hidden=true`, `Required=true`, `Min>=32`.
 - `groups.wrapped_key`, `logical_states.lock_payload`, and `system_settings.key_sentinel` are hidden.
+- The intent fields `groups.confirm_destructive` and `terraform_credentials.rotate_credential` are neither hidden nor system fields; `OnRecordEnrich` strips them from responses.
 - `state_versions.file` is a `FileField` with `Protected=true`, `MaxSelect=1`, and `MaxSize >= 800<<20`.
 - Unique indexes exist on `(group, name)` for `logical_states`, `(user, group)` for `group_memberships`, `(group, user)` for `group_invitations`, `group` for `terraform_credentials`, `username` for `terraform_credentials`, `group_id` and `credential_username` for `retired_groups`.
 - `audit_events` has indexes on `(group_id, created)`, `(event_type, created)`, and `(actor_id, created)`.
+- `state_versions` has an index on `(logical_state, created, id)`; `logical_states` has indexes on `non_current_at`, `lock_id`, and `lock_expires_at`.
 - `system_settings` has exactly one record with `master_key_generation=1` and `invitation_ttl_days=7`.
 - Every domain collection has `nil` create/update/delete rules in this slice; reads are also `nil` until Task 3.1.
 
@@ -624,13 +641,13 @@ Create the collections with `core.NewBaseCollection`. Use `core.TextField`, `cor
 
 Field set:
 
-- `groups`: `name` text required max 100; `status` select `active|suspended|pending_retirement`; `retention_days` number min 1 max 365; `lock_lease_duration` text optional; `wrapped_key` text required hidden; `retirement_requested_at` date optional; autodates.
+- `groups`: `name` text required max 100; `status` select `active|suspended|pending_retirement`; `retention_days` number min 1 max 365; `lock_lease_duration` text optional; `wrapped_key` text required hidden; `retirement_requested_at` date optional; `confirm_destructive` bool optional (not hidden; write-only via enrichment); autodates.
 - `group_memberships`: `user` relation users required cascade; `group` relation groups required cascade; `role` select `owner|member`; autodates.
 - `group_invitations`: `group` relation groups required cascade; `user` relation users required cascade; `email` email required; `invited_by` text required; `status` select `pending`; `expires_at` date required; autodates.
-- `terraform_credentials`: `group` relation groups required cascade; `username` text required; `password` password system hidden required min 32 max 128 cost 10; `enabled` bool; `issued_at` date required; `rotated_at`, `disabled_at`, `enabled_at` dates optional; `rotate_credential` bool hidden.
+- `terraform_credentials`: `group` relation groups required cascade; `username` text required; `password` password system hidden required min 32 max 71 cost 10 (PocketBase rejects a maximum above 71); `enabled` bool; `issued_at` date required; `rotated_at`, `disabled_at`, `enabled_at` dates optional; `rotate_credential` bool optional (not hidden; write-only via enrichment).
 - `logical_states`: `group` relation groups required cascade; `name` text required min 1 max 255; `status` select `empty|active|tombstoned|purged`; `current_version` relation `state_versions` max 1; `tombstoned_at`, `purged_at` dates optional; `lock_payload` text hidden max 1 MiB; `lock_id` text optional; `lock_acquired_at`, `lock_expires_at` dates optional; autodates.
 - `state_versions`: `logical_state` relation logical_states required cascade; `file` file required protected max 1 max size `800<<20`; `plaintext_bytes` number required min 0 max 536870912 only int; `sha256` text required min 64 max 64; `non_current_at` date optional; autodates.
-- `audit_events`: `event_type` text required max 64; `schema_version` number required min 1 only int; `actor_type` select `user|system|offline_operator`; `actor_id` text required; `subject_type` text required; `subject_id` text required; `group_id` text optional; `request_id` text optional; `details` json required max 64 KiB; autodates.
+- `audit_events`: `event_type` text required max 64; `schema_version` number required min 1 only int; `actor_type` select `user|superuser|terraform_credential|system|offline_operator`; `actor_id` text required; `subject_type` text required; `subject_id` text required; `group_id` text optional; `request_id` text optional; `details` json optional max 64 KiB; validators enforce the typed shape, and an event with no typed details stores `{}`; autodates.
 - `system_settings`: `master_key_generation` number required min 1 only int; `key_sentinel` text hidden max 4096; `invitation_ttl_days` number required min 1 max 90; autodates.
 - `retired_groups`: `group_id` text required; `credential_username` text required; `created` date required; `retirement_requested_at` date required; `purged_at` date required.
 
@@ -817,7 +834,7 @@ type Deps struct {
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestGetReturnsStateBytes`, `TestGetReturns404ForMissingState`, `TestGetReturns404ForTombstonedState`, `TestGetReturns401WithoutAuth`, `TestGetReturns401ForWrongGroup`, `TestGetReturns403ForSuspendedGroup`, `TestGetDoesNotReturn404ForAuthFailure`, `TestGetReturnsContentMD5`.
+Test names: `TestGetReturnsStateBytes`, `TestGetReturns404ForMissingState`, `TestGetReturns404ForTombstonedState`, `TestGetReturns401WithoutAuth`, `TestGetReturns401ForWrongGroup`, `TestGetReturns403ForSuspendedGroup`, `TestGetDoesNotReturn404ForAuthFailure`, `TestGetReturnsContentMD5`, `TestStateMiddlewareStripsLockIDFromURL`.
 
 Assertions:
 - A published state returns the exact bytes, `Content-Type: application/json`, and a correct base64 `Content-MD5`.
@@ -826,6 +843,7 @@ Assertions:
 - A valid credential for another group returns 401, never 404.
 - A suspended or pending-retirement group returns 403.
 - The handler never writes state bytes on an auth or integrity failure.
+- A rejected request carrying `?ID=` (for example a 401) leaves no lock ID in the URL that the PocketBase activity logger records.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -834,7 +852,7 @@ Expected: FAIL because the handlers do not exist.
 
 - [ ] **Step 3: Implement the read path**
 
-`httpapi.Register` registers `GET /state/{group}/{name}` on `e.Router` with the Basic Auth middleware. The middleware parses the header, calls `VerifyCredential`, compares `credential.GroupID` to the route group, and stores the credential in the request context. The handler calls `ReadState`, maps `apperr` classes to statuses, and writes `Content-MD5`. `ReadState` finds the logical state by `(group, name)`, requires `status=active`, decrypts the current version, verifies length and SHA-256, and returns the bytes. After parsing any `?ID=`, set `e.Request.URL.RawQuery = ""` before returning so PocketBase's activity logger never records a lock ID.
+`httpapi.Register` creates one state route group and binds a middleware before authentication that copies `?ID=` into the request context and clears `e.Request.URL.RawQuery`, so a request rejected by authentication, body limit, or panic never logs a lock ID. The Basic Auth middleware then parses the header, calls `VerifyCredential`, compares `credential.GroupID` to the route group, and stores the credential in the request context. Handlers read the lock ID from the context. Bind `apis.BodyLimit(limit)` on the group, where `limit` is the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB, so the default 32 MiB limit never caps a state. Register `GET /state/{group}/{name}`, an explicit `HEAD` route returning 405, and a method-less fallback returning 405 with `Allow`. Unbind `apis.DefaultCorsMiddlewareId` on the group so `OPTIONS` reaches the fallback with an `Allow` header instead of the CORS 204. The handler calls `ReadState`, maps `apperr` classes to statuses, and writes `Content-MD5`. `ReadState` finds the logical state by `(group, name)`, requires `status=active`, decrypts the current version, verifies length and SHA-256, and returns the bytes.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -860,7 +878,7 @@ git commit -m "feat(httpapi): add Basic Auth and Terraform state reads"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestPublishCreatesVersion`, `TestPublishSupersedesCurrent`, `TestPublishIsLinearizable`, `TestPublishRejectsOversize`, `TestPublishRejectsContentLengthMismatch`, `TestPublishRejectsBadContentMD5`, `TestPublishRequiresLockIDWhenLive`, `TestPublishRejectsStaleLockID`, `TestPublishRollsBackOnAuditFailure`, `TestPublishAcceptsPUT`.
+Test names: `TestPublishCreatesVersion`, `TestPublishSupersedesCurrent`, `TestPublishIsLinearizable`, `TestPublishRejectsOversize`, `TestPublishRejectsContentLengthMismatch`, `TestPublishRejectsBadContentMD5`, `TestPublishRequiresLockIDWhenLive`, `TestPublishRejectsStaleLockID`, `TestPublishRejectsTombstonedState`, `TestPublishRejectsPurgedState`, `TestPublishExtendsLease`, `TestPublishNeverShortensLease`, `TestPublishAfterLockEmitsVersionEvent`, `TestPublishRollsBackOnAuditFailure`, `TestPublishAcceptsPUT`, `TestPostAndPutReturn200`.
 
 Assertions:
 - The first unlocked write creates `logical_states` with `status=active`, one version, and one `logical_state_created` audit event carrying the version ID.
@@ -870,6 +888,10 @@ Assertions:
 - A bad `Content-MD5` returns 400.
 - A live lease requires the exact `?ID=`; missing or mismatched returns 409; a stale ID with no live lease returns 409.
 - An injected audit failure rolls back the version and pointer.
+- A write to a tombstoned state returns `409`; a write to a purged state returns `410`; neither changes the state record.
+- A successful write under a live lease sets `lock_expires_at` to the later of its current value and `now + effective duration`, in the same transaction, and never shortens an existing expiry (ADR 0002).
+- A first write to a lineage created empty by `LOCK` emits exactly one `state_version_published` event and no second `logical_state_created` event.
+- `POST` and `PUT` return `200` with an empty body.
 - `PUT` behaves exactly like `POST`.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -879,7 +901,7 @@ Expected: FAIL because publication does not exist.
 
 - [ ] **Step 3: Implement publication**
 
-Read and validate the body before opening the transaction. Compute byte count and SHA-256. In `RunInTransaction` with `txApp`: recheck group status, logical-state status, and lock authority; create the logical state when absent; unwrap the group key; encrypt; create the version record with the file field; save; set the prior version's `non_current_at`; set `current_version` and `status=active`; insert the audit event; commit. Use `txApp` for every read and write inside the transaction.
+Read and validate the body before opening the transaction. Compute byte count and SHA-256. In `RunInTransaction` with `txApp`: recheck group status, logical-state status (`tombstoned` returns 409, `purged` returns 410), and lock authority; create the logical state when absent; unwrap the group key; encrypt; create the version record with the file field; save; set the prior version's `non_current_at`; set `current_version` and `status=active`; extend the live lease to `max(current expiry, now + effective duration)` when a lease is live; insert exactly one audit event (`logical_state_created` only when this write created the lineage, otherwise `state_version_published`); commit. Use `txApp` for every read and write inside the transaction.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -904,11 +926,11 @@ git commit -m "feat(store): publish immutable encrypted state versions"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestLockAcquire`, `TestLockCreatesEmptyState`, `TestLockSameIDIsIdempotent`, `TestLockContentionReturns423WithExactJSON`, `TestLockAfterExpiry`, `TestLockOnTombstonedReturns410`, `TestLockRequiresContentType`, `TestLockRejectsMissingFields`, `TestLockAcceptsEmptyWhoPathInfo`, `TestUnlockMatchingID`, `TestUnlockMismatchedID`, `TestUnlockAbsentIDReturns200`, `TestUnlockEmptyBodyReturns400`, `TestMethodMatrixReturns405`.
+Test names: `TestLockAcquire`, `TestLockCreatesEmptyState`, `TestLockCreatesStateAudit`, `TestLockConcurrentAcquire`, `TestLockSameIDIsIdempotent`, `TestLockContentionReturns423WithExactJSON`, `TestLockAfterExpiry`, `TestLockOnTombstonedReturns410`, `TestLockRequiresContentType`, `TestLockRejectsWrongContentType`, `TestLockRejectsBadContentMD5`, `TestLockRejectsMissingFields`, `TestLockRejectsOversizeBody`, `TestLockAcceptsEmptyWhoPathInfo`, `TestLockAcceptsMigrationOperation`, `TestUnlockMatchingID`, `TestUnlockMismatchedID`, `TestUnlockConflictOmitsPayload`, `TestUnlockIDOnlyPayload`, `TestUnlockMalformedJSONReturns400`, `TestUnlockAbsentLeaseReturns200`, `TestUnlockEmptyBodyReturns400`, `TestMethodMatrixReturns405`.
 
 Assertions:
 - A valid payload acquires a lease with the group override or system duration and returns 200.
-- A first `LOCK` against an unused name atomically creates the empty logical state and permanently reserves the name.
+- A first `LOCK` against an unused name atomically creates the empty logical state, permanently reserves the name, and writes one `logical_state_created` audit event.
 - A same-ID replay returns 200 without changing the stored payload or expiry.
 - A different live ID returns 423 with the exact stored JSON, byte for byte.
 - An expired lease is acquirable by the same or a different ID.
@@ -916,6 +938,11 @@ Assertions:
 - Missing `Content-Type`, missing `ID`/`Operation`/`Version`, or an invalid `Created` returns 400.
 - Empty `Info`, `Path`, and `Who` are accepted.
 - `UNLOCK` with the matching live ID returns 200; mismatch returns 409; absent returns 200; an empty body returns 400.
+- `Operation` values `migration source state` and `migration destination state` are accepted.
+- Two concurrent acquisitions with different IDs produce exactly one `200` and one `423`.
+- A wrong `Content-Type`, a `Content-MD5` mismatch, or a body larger than 1 MiB is rejected instead of reaching the store.
+- `UNLOCK` reads the ID from the JSON body, accepts an ID-only object (empty `Operation`, `Version`, `Info`, `Path`, and `Who`, zero `Created`), and rejects a body with no non-empty `ID` with `400`, even when no lease exists.
+- A mismatched live ID returns `409` with no lock payload.
 - `PATCH`, `HEAD`, `OPTIONS`, and any other method on `/state/{group}/{name}` returns 405 with `Allow: GET, POST, PUT, DELETE, LOCK, UNLOCK`.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -925,7 +952,7 @@ Expected: FAIL because lock persistence does not exist.
 
 - [ ] **Step 3: Implement lock persistence and handlers**
 
-Parse the payload into `state.LockRequest`, preserve the raw JSON, and validate required fields. Acquire inside a short `RunInTransaction` that checks group and state status and the current lease. Use the `state.Acquire` and `state.Release` domain functions. Write the `423` body directly with `e.Response.WriteHeader(423)` and the exact stored JSON rather than through `ApiError.RawData()`, so PocketBase's activity logger never persists lock JSON. Register `LOCK` and `UNLOCK` with `e.Router.Route`, and register a method-less `/state/{group}/{name}` fallback returning 405.
+Validate `LOCK` and `UNLOCK` with separate rules: `LOCK` requires `ID`, `Operation`, `Version`, and a valid `Created`; `UNLOCK` requires only a non-empty `ID` in the JSON body. Preserve the raw `LOCK` JSON. Acquire inside a short `RunInTransaction` that checks group and state status and the current lease, and write the creation audit event when the state is new. Use the `state.Acquire` and `state.Release` domain functions. Write the `423` body directly with `e.Response.WriteHeader(423)` and the exact stored JSON rather than through `ApiError.RawData()`, so PocketBase's activity logger never persists lock JSON. Bind `apis.BodyLimit(1<<20)` on the lock routes. Register `LOCK` and `UNLOCK` with `e.Router.Route`, add the explicit `HEAD` route and method-less fallback from Task 2.2, and verify `OPTIONS` reaches the fallback after the CORS middleware is unbound.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -950,13 +977,16 @@ git commit -m "feat: add Terraform lock leases and LOCK/UNLOCK handlers"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestDeleteTombstonesState`, `TestDeleteRequiresLockIDWhenLive`, `TestDeleteWithoutLiveLeaseIsIdempotent`, `TestDeleteNeverCreatedIsNoOp`, `TestDeleteClearsMatchingLease`, `TestDeleteWritesAuditEvent`.
+Test names: `TestDeleteTombstonesState`, `TestDeleteEmptyCreatesTombstone`, `TestDeleteRequiresLockIDWhenLive`, `TestDeleteWithoutLiveLeaseIsIdempotent`, `TestDeleteStaleIDWithoutLeaseSucceeds`, `TestDeleteNeverCreatedIsNoOp`, `TestDeleteRepeatIsNoOp`, `TestDeletePurgedReturns200`, `TestDeleteClearsMatchingLease`, `TestDeleteWritesAuditEvent`.
 
 Assertions:
 - A live lease requires `?ID=`; missing or mismatched returns 409.
 - A matching delete tombstones the state, clears the lease, sets `non_current_at` on the current version, and writes the tombstone audit event atomically.
 - Repeating `DELETE` returns 200.
 - `DELETE` on a never-created path returns 200 and creates no record.
+- `DELETE` on an empty logical state transitions it to an empty tombstone and writes the audit event.
+- A repeat `DELETE` on a tombstoned or purged state returns `200` without changing `tombstoned_at`, `non_current_at`, or writing another audit event.
+- A stale `?ID=` with no live lease returns `200`.
 - A failed audit rolls back the tombstone.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -966,7 +996,7 @@ Expected: FAIL because tombstoning does not exist.
 
 - [ ] **Step 3: Implement tombstoning**
 
-In one `RunInTransaction`: recheck group/state/lock; if the state is absent, return success; otherwise set `status=tombstoned`, `tombstoned_at`, clear lock fields, set the current version's `non_current_at`, keep `current_version` as the restoration target, and insert the audit event.
+In one `RunInTransaction`: recheck group/state/lock; if the state is absent or already tombstoned or purged, return success without writing; otherwise set `status=tombstoned`, `tombstoned_at`, clear lock fields, set the current version's `non_current_at` when a current version exists, keep `current_version` as the restoration target, and insert the audit event. An `empty` state becomes an empty tombstone rather than a no-op.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1032,13 +1062,15 @@ git commit -m "feat: add owner raw-state download and deny direct file access"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestVersionFieldsImmutable`, `TestLogicalStateCombinationValid`, `TestEnrichHidesSecrets`, `TestEnrichAddsLockMetadata`, `TestEnrichHidesFileFields`.
+Test names: `TestVersionFieldsImmutable`, `TestLogicalStateCombinationValid`, `TestLockFieldsAllOrNone`, `TestIntentFieldsNeverSerialize`, `TestEnrichHidesSecrets`, `TestEnrichAddsLockMetadata`, `TestEnrichHidesFileFields`.
 
 Assertions:
 - A direct `app.Save` that changes a version's file, byte count, SHA-256, or logical-state relation is rejected.
 - Committed combinations follow #415: empty has no versions and no pointer; active has a current version with no `non_current_at`; tombstoned may keep the former current version with `non_current_at`; purged has no pointer or versions.
 - `OnRecordEnrich` hides `wrapped_key`, `password`, `lock_payload`, and file fields; it adds `lock_id`, `lock_acquired_at`, `lock_expires_at`, and current/non-current status.
 - A generic REST view of `state_versions` never exposes the file name or file URL.
+- `OnRecordEnrich` strips `groups.confirm_destructive` and `terraform_credentials.rotate_credential` after the default enrichment, for every principal including superusers, and both fields are `false` after every governed save.
+- A logical-state save that sets some but not all lock fields is rejected.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1047,7 +1079,7 @@ Expected: FAIL because the hooks do not exist.
 
 - [ ] **Step 3: Implement the hooks**
 
-Bind `OnRecordValidate` and `OnRecordUpdate` for `state_versions` and `logical_states`. Reject changes to immutable fields. Bind `OnRecordEnrich` for the domain collections. Keep the hooks idempotent and free of secrets in errors.
+Bind `OnRecordValidate` and `OnRecordUpdate` for `state_versions` and `logical_states`. Reject changes to immutable fields, changes to `non_current_at` outside a lifecycle command, and partial lock-field writes. Bind `OnRecordEnrich` for the domain collections and strip the two intent fields after `e.Next()` (PocketBase unhides fields for superusers during default enrichment, so the strip must follow it). These validators prevent accidents and data corruption; they are not a containment boundary against a superuser (ADR 0002). Keep the hooks idempotent and free of secrets in errors.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1243,7 +1275,7 @@ Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Use the hidden `rotate_credential` intent field. Validate the actor and target, consume and clear the flag, mint the new secret, set the password, update timestamps, and audit in one transaction. Return the new secret only in the `X-United-Credential` response header, exactly once. Implement the guard with a per-credential mutex or a database compare-and-swap; a contention returns 409.
+Use the write-only `rotate_credential` intent field. Validate the actor and target, consume and clear the flag in the same transaction, mint the new secret, set the password, update timestamps, and audit in one transaction. Return the new secret only in the `X-United-Credential` response header, exactly once. Implement the guard with a per-credential mutex or a database compare-and-swap; a contention returns 409.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1284,7 +1316,7 @@ Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Validate the actor and transition, set timestamps and status, and audit atomically. Strip `confirm_destructive` before persistence. Use the domain retention and lease validators.
+Validate the actor and transition, set timestamps and status, and audit atomically. Consume and clear `confirm_destructive` in the same transaction (write-only field, ADR 0002). Use the domain retention and lease validators.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1355,7 +1387,7 @@ Test names: `TestAuditCatalogComplete`, `TestAuditDetailsValidated`, `TestAuditA
 Assertions:
 - Every event type has a `schema_version=1` details validator and an actor/subject.
 - Unknown details fields or missing required fields are rejected.
-- No update or delete path exists for non-superusers; superusers can read.
+- Append-only holds for every non-superuser principal: no update or delete path exists for anonymous, member, owner, or service code. A superuser can alter or delete audit rows as a trusted operator, and the trust boundary is documented rather than enforced (ADR 0002).
 - The mirror forwards only `pb.type`, `pb.method`, path without query, `pb.status`, `pb.exec_time_ms`, `pb.auth`, `pb.user_ip`, `pb.remote_ip`, and `pb.error`.
 - `details`, `meta` except `request_id`, `referer`, `userAgent`, and all query strings are dropped.
 
@@ -1378,6 +1410,46 @@ Expected: PASS.
 ```bash
 git add internal/store/audit.go internal/hooks/logs.go
 git commit -m "feat: complete the audit catalog and PocketBase log mirror"
+```
+
+### Task 3.8: Operator trust boundary and hardening documentation
+
+**Files:**
+- Create: `site/content/explanation/trust-boundary.md`, `site/content/how-to/harden-deployment.md`
+- Modify: `site/content/reference/configuration.md`
+- Test: `site/` build and link checks
+
+**Interfaces:**
+- Produces: the operator-facing statement of what the superuser role can do and how a deployment is hardened around it.
+
+- [ ] **Step 1: Write the failing docs check**
+
+Run `hugo --panicOnWarning --printPathWarnings` in `site/` and expect it to fail because the pages do not exist.
+
+Assertions after the pages exist:
+- `trust-boundary.md` states that superusers bypass every collection rule and record hook, that audit rows are not tamper-evident against them, and that validators are for correctness, not containment.
+- `harden-deployment.md` states that superuser access is for setup and backup only, that the dashboard and superuser API are reachable only over TLS behind an isolated edge, and that recovery from superuser misuse is restore of the paired backup set.
+- `configuration.md` names `UNITED_MASTER_KEY`, `UNITED_MASTER_KEY_GENERATION`, `UNITED_MAX_STATE_SIZE`, `UNITED_DATA_DIR`, `UNITED_LISTEN_ADDR`, `UNITED_LOCK_LEASE_DURATION`, `TELEMETRY_ENABLED`, `UNITED_ACTOR`, and `LOG_LEVEL` with their bounds and defaults.
+
+- [ ] **Step 2: Run the docs check to verify it fails**
+
+Run: `cd site && hugo --panicOnWarning --printPathWarnings`
+Expected: FAIL because the pages do not exist.
+
+- [ ] **Step 3: Write the pages**
+
+Write the three pages in the Diataxis modes they belong to, link them from the explanation and how-to indexes, and keep every claim consistent with ADR 0002.
+
+- [ ] **Step 4: Run the docs check to verify it passes**
+
+Run: `cd site && hugo --panicOnWarning --printPathWarnings`
+Expected: PASS with zero warnings.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add site/content
+git commit -m "docs: document the superuser trust boundary and deployment hardening"
 ```
 
 ---
@@ -1625,10 +1697,10 @@ git commit -m "feat(offline): add the offline command skeleton"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestRekeyAllOrNothing`, `TestRekeyAdvancesGeneration`, `TestRekeyRejectsBadKeys`, `TestRekeyAudit`, `TestRepairOneGroup`, `TestRepairDoesNotAdvanceGeneration`, `TestRepairRefusesRetired`.
+Test names: `TestRekeyAllOrNothing`, `TestRekeyAdvancesGeneration`, `TestRekeyReencryptsSentinel`, `TestRekeyRejectsBadKeys`, `TestRekeyAudit`, `TestRepairOneGroup`, `TestRepairDoesNotAdvanceGeneration`, `TestRepairRefusesRetired`.
 
 Assertions:
-- Rekey re-wraps every non-retired group key, advances `master_key_generation`, and audits in one transaction.
+- Rekey re-wraps every non-retired group key, re-encrypts `system_settings.key_sentinel` under the new master key, advances `master_key_generation`, and audits the old and new generation in one transaction (ADR 0002).
 - Any failure rolls back all changes.
 - Malformed, wrong-length, or identical keys are rejected.
 - Repair targets one group, does not advance the generation, and audits.
@@ -1641,7 +1713,7 @@ Expected: FAIL because rekey does not exist.
 
 - [ ] **Step 3: Implement rekey and repair**
 
-Use `RunInTransaction`, `crypto.UnwrapGroupKey`/`WrapGroupKey`, and the audit catalog. Record `actor_type=offline_operator`, `actor_id`, `details.host`, and `details.master_key_generation`; never key material.
+Use `RunInTransaction`, `crypto.UnwrapGroupKey`/`WrapGroupKey`, and the audit catalog. Re-encrypt the sentinel with `crypto.NewSentinel` under the new key before committing. Record `actor_type=offline_operator`, `actor_id`, `details.host`, and `details.master_key_generation`; never key material.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1707,22 +1779,25 @@ git commit -m "feat(offline): add full-history verify and forced orphan cleanup"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestFirstBootWritesSentinel`, `TestSecondBootVerifies`, `TestGenerationMismatchRefuses`, `TestWrongKeyRefuses`, `TestRestoreDrill`.
+Test names: `TestFirstBootWritesSentinel`, `TestFirstBootWritesConfiguredGeneration`, `TestMissingSentinelWithGroupsRefuses`, `TestSecondBootVerifies`, `TestGenerationMismatchRefuses`, `TestWrongKeyRefuses`, `TestCorruptSentinelRefuses`, `TestBootAfterRekey`.
 
 Assertions:
-- A fresh database with generation 1 and no sentinel writes the sentinel and starts.
+- A fresh database with no sentinel writes the configured generation and sentinel and starts, for any configured generation of 1 or more.
+- A database that has wrapped group keys but no sentinel refuses to start.
+- A corrupt sentinel refuses to start.
 - A second boot with the same key and generation starts.
 - A different generation or key refuses to start before listening.
+- A boot after a global rekey with the new key and generation starts, and with the old key refuses.
 - The restore drill restores the newest database backup with its paired file snapshot and key, runs `verify`, and runs the Terraform harness against the restored instance.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/wire -run TestFirstBoot -v`
-Expected: FAIL because the gate does not exist.
+Expected: FAIL because the corrupt-sentinel, missing-sentinel-with-groups, configured-generation, and post-rekey cases are not implemented (the base gate lands in Task 1.9).
 
 - [ ] **Step 3: Implement the gate and drill**
 
-In `OnBootstrap`, load `system_settings`, compare `master_key_generation`, and check `key_sentinel`. Write the sentinel on first boot. The drill script documents the file snapshot before the database backup and the full-history verify.
+Move the gate to `wire.keyGate(app)`, called from `OnServe` before `e.Next()` (application migrations have run by then; `OnBootstrap` runs before they do) and from each offline command after `RunAllMigrations()`. On boot: load `system_settings`; if `key_sentinel` is empty and no group has a wrapped key, write the configured generation and `crypto.NewSentinel`, then start; if the sentinel is empty but wrapped keys exist, refuse; otherwise compare `master_key_generation` and `CheckSentinel` and refuse on either mismatch. The drill script documents the file snapshot before the database backup and the full-history verify.
 
 - [ ] **Step 4: Run the test to verify it passes**
 

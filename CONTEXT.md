@@ -81,7 +81,7 @@ An owner action that returns a tombstoned logical state to use by making its ret
 _Avoid_: Path reuse, rollback
 
 **Lock lease**:
-A time-bounded exclusive claim by one Terraform operation over one logical state, identified by the operation's opaque lock ID and recoverable through expiry.
+A time-bounded exclusive claim by one Terraform operation over one logical state, identified by the operation's opaque lock ID, extended only by that operation's successful state writes, and recoverable through expiry.
 _Avoid_: Database lock, indefinite lock, user lock
 
 **Terraform lock payload**:
@@ -149,7 +149,7 @@ The deployment-held secret that protects every operational group's data key, is 
 _Avoid_: Group data key, Terraform credential
 
 **Master-key generation**:
-The informational ordinal stored with application data that begins at one and advances only when a completed rekey replaces the runtime master key; it helps operators associate backups with externally retained keys but does not validate key compatibility.
+The ordinal stored with application data that begins at one and advances only when a completed rekey replaces the runtime master key; startup compares it with the deployment's configured value and refuses a mismatch, and operators use it to associate backups with externally retained keys.
 _Avoid_: Key identifier, backup generation, group data-key version
 
 **Group data key**:
@@ -169,7 +169,7 @@ Permanent removal of a group's protected data key, making any residual encrypted
 _Avoid_: Physical object deletion, tombstoning, key rotation
 
 **Security audit event**:
-An immutable, permanently retained record of a security-significant administrative action or state-authority transition, available only to system operators and preserved after group retirement.
+An immutable, permanently retained record of a security-significant administrative action or state-authority transition, available only to system operators and preserved after group retirement; append-only against every non-superuser principal, while a superuser remains fully trusted and can alter it.
 _Avoid_: Request log, metric
 
 **Operational event**:
