@@ -44,6 +44,7 @@
 
 ```text
 cmd/united/main.go
+cmd/united/devseed.go
 internal/config/config.go
 internal/apperr/apperr.go
 internal/telemetry/registry.go
@@ -77,6 +78,7 @@ internal/httpapi/state.go
 internal/httpapi/lock.go
 internal/httpapi/download.go
 internal/httpapi/errors.go
+internal/httpapi/middleware.go
 internal/hooks/records.go
 internal/hooks/enrich.go
 internal/hooks/files.go
@@ -90,6 +92,7 @@ internal/jobs/guard.go
 internal/jobs/jobs.go
 internal/jobs/cleanup.go
 internal/jobs/orphans.go
+internal/jobs/purge.go
 internal/jobs/integrity.go
 internal/offline/root.go
 internal/offline/rekey.go
@@ -97,10 +100,16 @@ internal/offline/verify.go
 internal/offline/cleanup.go
 internal/wire/wire.go
 tests/integration/harness.go
+tests/backends/main.tf
+tests/restore/drill.sh
+docs/releases/v0.2.0.md
 tests/ (Terraform fixture)
 site/
 .github/workflows/smoke.yml
+.github/workflows/test.yml
 .github/workflows/terraform-v2.yml
+.github/workflows/terraform-matrix.yml
+.github/workflows/docs.yml
 docs/adr/0001-embed-pocketbase-in-process.md
 docs/plans/pocketbase-replatform.md
 ```
@@ -290,11 +299,12 @@ Slice gate: the app boots with `/api` only, migrations apply from empty, the key
 
 - [ ] **Step 1: Write the failing table test**
 
-Test names: `TestLoadDefaults`, `TestLoadRequiresMasterKey`, `TestLoadRejectsMalformedMasterKey`, `TestLoadRejectsWrongLengthMasterKey`, `TestLoadRejectsBadMaxStateSize`, `TestLoadRejectsBadLockLease`, `TestLoadRejectsBadLogLevel`.
+Test names: `TestLoadDefaults`, `TestServeRequiresMasterKey`, `TestCommandAllowsMissingMasterKey`, `TestLoadRejectsMalformedMasterKey`, `TestLoadRejectsWrongLengthMasterKey`, `TestLoadRejectsZeroGeneration`, `TestLoadRejectsBadMaxStateSize`, `TestLoadRejectsBadLockLease`, `TestLoadRejectsBadLogLevel`.
 
 Assertions:
-- With `UNITED_MASTER_KEY` set to base64 of 32 bytes, `Load` returns `MaxStateSize == 15_000_000`, `LockLeaseDuration == 35*time.Minute`, `TelemetryEnabled == false`, `LogLevel == slog.LevelInfo`, `DataDir == "./pb_data"`, `ListenAddr == "0.0.0.0:8090"`.
-- Missing, non-base64, or 31/33-byte keys return an error naming `UNITED_MASTER_KEY`.
+- With `UNITED_MASTER_KEY` set to base64 of 32 bytes, `Load(ctx, ModeServe)` returns `MaxStateSize == 15_000_000`, `LockLeaseDuration == 35*time.Minute`, `TelemetryEnabled == false`, `LogLevel == slog.LevelInfo`, `DataDir == "./pb_data"`, `ListenAddr == "0.0.0.0:8090"`, `MasterKeyGeneration == 1`.
+- `ModeServe` with a missing, non-base64, 31-byte, or 33-byte key returns an error naming `UNITED_MASTER_KEY`; `ModeCommand` with the key unset returns a config with a nil `MasterKey` and the same other values.
+- `UNITED_MASTER_KEY_GENERATION` of `0` or `-1` fails.
 - `UNITED_MAX_STATE_SIZE` of `0`, `-1`, or `536870913` fails; `536870912` passes.
 - `UNITED_LOCK_LEASE_DURATION` of `4m59s`, `24h1s`, or `banana` fails; `5m`, `24h`, and unset pass.
 - `LOG_LEVEL=verbose` fails.
@@ -303,14 +313,14 @@ Use `t.Setenv` and `envconfig.Process(context.Background(), &cfg)`. Reset with `
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/config -run TestLoad -v`
+Run: `go test ./internal/config -v`
 Expected: FAIL because `Config` and `Load` do not exist.
 
 - [ ] **Step 3: Implement `internal/config/config.go`**
 
-Use struct tags such as `env:"UNITED_MASTER_KEY,required"`, `env:"UNITED_MAX_STATE_SIZE,default=15000000"`, `env:"UNITED_LOCK_LEASE_DURATION,default=35m"`, `env:"TELEMETRY_ENABLED,default=false"`, `env:"LOG_LEVEL,default=info"`, `env:"UNITED_DATA_DIR,default=./pb_data"`, `env:"UNITED_LISTEN_ADDR,default=0.0.0.0:8090"`, `env:"UNITED_MASTER_KEY_GENERATION,default=1"`, and `env:"UNITED_ACTOR"`.
+Use struct tags such as `env:"UNITED_MASTER_KEY"`, `env:"UNITED_MAX_STATE_SIZE,default=15000000"`, `env:"UNITED_LOCK_LEASE_DURATION,default=35m"`, `env:"TELEMETRY_ENABLED,default=false"`, `env:"LOG_LEVEL,default=info"`, `env:"UNITED_DATA_DIR,default=./pb_data"`, `env:"UNITED_LISTEN_ADDR,default=0.0.0.0:8090"`, `env:"UNITED_MASTER_KEY_GENERATION,default=1"`, and `env:"UNITED_ACTOR"`.
 
-Decode `MasterKey` from base64 in `Load` or a custom `envconfig` decoder, and reject any length other than 32. Parse `LOG_LEVEL` into `slog.Level`. Validate the max-size ceiling of `512 << 20` and the lease bounds. Configuration errors are bootstrap errors and use `fmt.Errorf` naming the setting; they do not use the HTTP error classes.
+Use `envconfig.Base64Bytes` for `MasterKey`; a plain `[]byte` field receives the base64 text unchanged. Reject any decoded length other than 32. In `ModeServe`, require the key to be present and non-empty; in `ModeCommand` (offline commands, which receive their keys through flags) allow it to be absent. Parse `LOG_LEVEL` into `slog.Level`. Reject a generation below 1. Validate the max-size ceiling of `512 << 20` and the lease bounds. Configuration errors are bootstrap errors and use `fmt.Errorf` naming the setting; they do not use the HTTP error classes.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -487,9 +497,9 @@ type SetupConfig struct {
 Test names: `TestSetupDisabledIsNoOp`, `TestSetupRequiresEndpointWhenEnabled`, `TestSetupRejectsPrometheusExporter`, `TestSetupBuildsProviders`, `TestSetupReturnsOTelHandler`, `TestSetupRedactsExportedLogs`.
 
 Assertions:
-- Disabled returns a non-nil `Shutdown`, a nil handler, and leaves `otel.GetTracerProvider()` as the no-op provider.
+- Disabled returns a non-nil `Shutdown`, a nil handler, and leaves the global tracer, meter, and logger providers as the no-op providers, without calling `autoexport`.
 - Enabled returns a non-nil `slog.Handler` that writes to the OTel log pipeline.
-- Enabled with no `OTEL_EXPORTER_OTLP_ENDPOINT` or per-signal endpoint returns an error naming the variable.
+- Enabled with any signal exported over OTLP and no `OTEL_EXPORTER_OTLP_ENDPOINT` or per-signal endpoint returns an error naming the variable. An unset `OTEL_*_EXPORTER` defaults to `otlp`, so the check covers unset as well as explicit `otlp` values, and it runs before `autoexport` is called.
 - `OTEL_METRICS_EXPORTER=prometheus` returns an error.
 - Enabled with `OTEL_TRACES_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=otlp`, and an endpoint builds providers; `Shutdown` is idempotent.
 - A log record carrying `password` never reaches the in-memory exporter.
@@ -666,9 +676,9 @@ git commit -m "feat(migrations): add the full PocketBase domain schema"
 ### Task 1.9: App bootstrap, composition root, and v1 removal
 
 **Files:**
-- Create: `cmd/united/main.go`, `internal/wire/wire.go`, `.github/workflows/smoke.yml`
-- Modify: `mise.toml`, `.goreleaser.yaml`, `Dockerfile`, `Makefile`, `.air.toml`, `README.md`
-- Delete: `main.go`, `config.go`, `handlers.go`, `middlewares.go`, `util.go`, `.github/workflows/terrafrom-test.yml`
+- Create: `cmd/united/main.go`, `internal/wire/wire.go`, `.github/workflows/smoke.yml`, `.github/workflows/test.yml`
+- Modify: `mise.toml`, `.goreleaser.yaml`, `Dockerfile`, `Makefile`, `.air.toml`, `README.md`, `AGENTS.md`, `.gitignore`, `.renovaterc.json`, `.golangci.yml`, `docker-compose.yml`, `tests/Makefile`
+- Delete: `main.go`, `config.go`, `handlers.go`, `middlewares.go`, `util.go`, `tests/nginx.conf`, `.github/workflows/terrafrom-test.yml`
 - Test: `internal/wire/wire_test.go`
 
 **Interfaces:**
@@ -684,13 +694,15 @@ type Deps struct {
 
 - [ ] **Step 1: Write the failing boot test**
 
-Test names: `TestBootServesAPIHealth`, `TestBootReturns404ForStateBeforeSlice2`, `TestBootRunsMigrations`, `TestBootRefusesKeyMismatch`.
+Test names: `TestBootServesAPIHealth`, `TestBootReturns404ForStateBeforeSlice2`, `TestBootRunsMigrations`, `TestBootWritesConfiguredGeneration`, `TestBootRefusesKeyMismatch`, `TestBootRefusesCorruptSentinel`.
 
 Use `tests.NewTestApp(t.TempDir())`, call `wire.Register(app, deps)`, trigger `OnServe` into a `httptest.NewServer` through the built mux, and assert:
 - `GET /api/health` returns 200.
 - `GET /state/group/name` returns 404 in slice 1.
 - The app migrations ran and the collections exist.
-- A second app with a different master key and the same data dir refuses to boot with a key-gate error.
+- A fresh data directory with `UNITED_MASTER_KEY_GENERATION=2` boots, writes generation 2 and the sentinel, and serves.
+- A second app built with `pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: first.DataDir()})` and a different master key refuses to boot with a key-gate error.
+- A corrupt `key_sentinel` refuses to boot.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -703,24 +715,36 @@ Expected: FAIL because `wire` does not exist.
 
 ```go
 func main() {
-	cfg, err := config.Load(context.Background())
+	base, err := config.Load(context.Background(), config.ModeCommand) // data dir and listen address only
 	if err != nil { ... }
-	shutdown, otelHandler, err := telemetry.Setup(context.Background(), telemetry.SetupConfig{...})
-	if err != nil { ... }
-	logger := telemetry.NewLogger(cfg.LogLevel, cfg.TelemetryEnabled, otelHandler)
-	...
-	app := pocketbase.NewWithConfig(pocketbase.Config{
-		DefaultDataDir: cfg.DataDir,
-		HideStartBanner: true,
-	})
-	if err := wire.Register(app, deps); err != nil { ... }
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: base.DataDir})
+
+	serve := cmd.NewServeCommand(app, false)
+	serve.PreRunE = func(*cobra.Command, []string) error {
+		cfg, err := config.Load(context.Background(), config.ModeServe)
+		if err != nil { return err }
+		shutdown, otelHandler, err := telemetry.Setup(context.Background(), telemetry.SetupConfig{...})
+		if err != nil { return err }
+		logger := telemetry.NewLogger(cfg.LogLevel, cfg.TelemetryEnabled, otelHandler)
+		return wire.Register(app, wire.Deps{Config: cfg, Logger: logger, Shutdown: shutdown})
+	}
+	if f := serve.PersistentFlags().Lookup("http"); f != nil {
+		f.DefValue, _ = f.Value.Set(base.ListenAddr)
+	}
+	app.RootCmd.AddCommand(serve)
+	offline.Register(app.RootCmd, ...) // config.ModeCommand; never OTel
+
 	if err := app.Execute(); err != nil { ... }
 }
 ```
 
-`wire.Register` binds `OnBootstrap` to the key gate and cron registration, `OnServe` to route registration, `OnTerminate` to shutdown with a 5-second flush timeout, and imports `internal/migrations` for its side effect. In slice 1, `OnServe` registers no custom routes.
+`app.Execute()` does not register `serve` or `superuser` (that is `app.Start()`), so United adds `cmd.NewServeCommand` itself. Configuration and telemetry are loaded inside the serve command, never before command dispatch, so an offline command cannot start OTel. `HideStartBanner` has no effect under `Execute()` and is not set.
 
-Delete the v1 files and run `go mod tidy`; assert `go.mod` no longer contains Gin, the AWS SDK, the S3 encryption client, or Redis. Add the `depguard` rule to `.golangci.yml`. Update `mise.toml` build to `go build -o dist/united ./cmd/united`, `.goreleaser.yaml` to `main: ./cmd/united`, `Dockerfile` to copy `dist/united`, `Makefile` run to `DEV=true ./dist/united serve`, and `.air.toml` to build `./cmd/united`. Set the `serve` command's `--http` flag default from `cfg.ListenAddr` in `cmd/united/main.go`. Rewrite `README.md` to a short overview plus pointers to `site/` and `docs/`.
+`wire.Register` binds `OnServe` to the key gate, route registration, and cron registration, `OnTerminate` to shutdown with a 5-second flush timeout, and imports `internal/migrations` for its side effect. It does not bind `OnBootstrap`; application migrations have not run at that point (ADR 0002). In slice 1, `OnServe` registers no custom routes.
+
+Delete the v1 files and run `go mod tidy`; assert `go.mod` no longer contains Gin, the AWS SDK, the S3 encryption client, or Redis. Add the `depguard` rule to `.golangci.yml`, including the `tools/security` allow entry. Update `mise.toml` build to `go build -o dist/united ./cmd/united`, `.goreleaser.yaml` to `main: ./cmd/united`, `Dockerfile` to keep `COPY united /` (goreleaser stages the binary at the build-context root) and add `CMD ["serve"]`, and `.air.toml` to build `./cmd/united` and run `serve` with a development `UNITED_MASTER_KEY`. Rewrite the `Makefile` `run` target to start air with `UNITED_MASTER_KEY` set and without `AWS_PROFILE`, `BUCKET`, `KEY_ARN`, or `AUTH_URL`. Reduce `docker-compose.yml` to the LocalStack service that the S3 storage tests need, and delete `tests/nginx.conf` with the v1 auth mock. Rewrite `README.md` to a short overview plus pointers to `site/` and `docs/`, and rewrite `AGENTS.md` with the new repository map, commands, and configuration.
+
+Before deleting `.github/workflows/terrafrom-test.yml`, update the `main` branch required status checks to the workflows that replace it (`smoke` and `terraform-v2`); `terraform-test` is currently required and would block every pull request once its workflow is gone. Add `.github/workflows/test.yml` running `go build ./...` and `go test ./...` on pull requests, and make `smoke.yml` boot the binary, check `/api/health`, and assert the migration schema. Add `pb_data/`, `site/public/`, and `site/resources/` to `.gitignore`, and disable Renovate automerge for PocketBase, OpenTelemetry, Hugo, and Hextra so pinned versions move deliberately. Restrict the Docker tag templates in `.goreleaser.yaml` to `{{ .Tag }}` and `{{ .Major }}.{{ .Minor }}` for this release, so `latest` and `v0` keep pointing at the v0.1.7 image.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -737,8 +761,8 @@ git commit -m "feat: boot PocketBase and remove the Gin/S3/Redis implementation"
 ### Task 1.10: Documentation scaffold and ADR
 
 **Files:**
-- Create: `site/hugo.yaml`, `site/go.mod`, `site/content/_index.md`, `site/content/how-to/_index.md`, `site/content/reference/_index.md`, `site/content/explanation/_index.md`, `site/content/tutorials/_index.md`
-- Create: `docs/adr/0001-embed-pocketbase-in-process.md`
+- Create: `site/hugo.yaml`, `site/go.mod`, `site/go.sum`, `site/content/_index.md`, `site/content/how-to/_index.md`, `site/content/reference/_index.md`, `site/content/explanation/_index.md`, `site/content/tutorials/_index.md`, `.markdownlint-cli2.yaml`, `.github/workflows/docs.yml`
+- Modify: `docs/adr/0001-embed-pocketbase-in-process.md` (already committed; extend it)
 - Modify: `README.md`
 - Test: `site/` build
 
@@ -748,11 +772,11 @@ Add a `site` build step to the standard gate. Run `hugo --panicOnWarning --print
 
 - [ ] **Step 2: Create the Hextra scaffold**
 
-Pin Hugo extended `0.166.0` in `mise.toml`. Add Hextra `v0.13.0` as a Hugo module in `site/go.mod`. Create the four Diátaxis sections and a landing page outside them. Configure FlexSearch, breadcrumbs, TOC, code copy, edit links to `main`, and tree navigation with explicit weights. Do not add a version dropdown yet; it arrives with the first release.
+Pin `hugo-extended` `0.166.0` in `mise.toml` (the mise tool name is `hugo-extended`, not `hugo`). Add Hextra `v0.13.0` as a Hugo module in `site/go.mod`. Create the four Diátaxis sections and a landing page outside them. Configure FlexSearch, breadcrumbs, TOC, code copy, edit links to `main`, and tree navigation with explicit weights. Add `docs:serve`, `docs:build`, and `docs:check` tasks to `mise.toml`, pin `markdownlint-cli2` and `lychee` there, and add `.github/workflows/docs.yml` running `mise run docs:check` when `site/` or `docs/` changes. Do not add a version dropdown yet; it arrives with the first release.
 
 - [ ] **Step 3: Write the ADR**
 
-Record: one embedded PocketBase process owns the listener and `/api`; United's domain packages stay PocketBase-free; v1 source is removed in slice 1 and survives only in `version-0.1x`, tags, and releases; the release is `v0.2.0`. Include the alternatives (separate service, long-lived branch) and why they were rejected.
+Extend the committed ADR to record: one embedded PocketBase process owns the listener and `/api`; United's domain packages stay PocketBase-free; v1 source is removed in slice 1 and survives only in `version-0.1x`, tags, and releases; the release is `v0.2.0`. Include the alternatives (separate service, long-lived branch) and why they were rejected.
 
 - [ ] **Step 4: Run the build**
 
@@ -762,7 +786,7 @@ Expected: PASS with zero warnings.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add site docs/adr README.md mise.toml
+git add site docs/adr README.md mise.toml .markdownlint-cli2.yaml .github/workflows/docs.yml
 git commit -m "docs: scaffold the Hugo site and record the embedded PocketBase ADR"
 ```
 
@@ -775,15 +799,15 @@ Slice gate: the real Terraform harness passes init, plan, apply, refresh, state 
 ### Task 2.1: Integration harness and credential verification
 
 **Files:**
-- Create: `tests/integration/harness.go`, `internal/store/store.go`, `internal/store/credentials.go`
+- Create: `tests/integration/harness.go`, `internal/store/store.go`, `internal/store/credentials.go`, `internal/store/groups.go`, `internal/store/audit.go`
 - Test: `internal/store/credentials_test.go`, `tests/integration/harness_test.go`
 
 **Interfaces:**
-- Produces: `store.New(app core.App, cfg *config.Config, logger *slog.Logger, clock state.Clock) *Store`, `Store.VerifyCredential`, `tests/integration.NewApp(t *testing.T) (*tests.TestApp, *wire.Deps)`.
+- Produces: `store.New(app core.App, cfg *config.Config, logger *slog.Logger, clock state.Clock) *Store`, `Store.VerifyCredential`, `Store.CreateGroup(ctx, actor Actor, name string) (Group, string, error)`, `tests/integration.NewApp(t *testing.T) (*tests.TestApp, *wire.Deps)`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestVerifyCredentialSuccess`, `TestVerifyCredentialUnknownUser`, `TestVerifyCredentialWrongPassword`, `TestVerifyCredentialDisabled`, `TestVerifyCredentialSuspendedGroup`, `TestVerifyCredentialUnknownUserDoesBcryptWork`.
+Test names: `TestVerifyCredentialSuccess`, `TestVerifyCredentialUnknownUser`, `TestVerifyCredentialWrongPassword`, `TestVerifyCredentialDisabled`, `TestVerifyCredentialSuspendedGroup`, `TestVerifyCredentialUnknownUserDoesBcryptWork`, `TestCreateGroupFixture`, `TestCreateGroupFixtureAudits`.
 
 Assertions:
 - A seeded group and credential verify with the correct password.
@@ -798,7 +822,9 @@ Expected: FAIL because the store does not exist.
 
 - [ ] **Step 3: Implement the harness and verifier**
 
-The harness wraps `tests.NewTestApp(t.TempDir())`, calls `wire.Register`, and returns the app. The verifier finds the credential by `username`, calls `Record.ValidatePassword`, checks `enabled`, and loads the group status. For an unknown username, call `ValidatePassword` against a fixed dummy bcrypt hash so the cost matches. Never log the username or password.
+The harness wraps `tests.NewTestApp(t.TempDir())`, calls `wire.Register`, and returns the app. The verifier finds the credential by `username`, calls `Record.ValidatePassword`, checks `enabled`, and loads the group status. For an unknown username, validate against a fixed `core.PasswordFieldValue{Hash: dummy}` so the bcrypt cost matches. Never log the password.
+
+Implement `Store.CreateGroup` in the same task because the harness needs it: one `RunInTransaction` creates the group, the creator's owner membership, the wrapped data key, the credential with a 32-byte base64url secret, and the `group_created` audit event. Slice 3 adds the API hook and the one-time secret response on top of it.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -834,7 +860,7 @@ type Deps struct {
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestGetReturnsStateBytes`, `TestGetReturns404ForMissingState`, `TestGetReturns404ForTombstonedState`, `TestGetReturns401WithoutAuth`, `TestGetReturns401ForWrongGroup`, `TestGetReturns403ForSuspendedGroup`, `TestGetDoesNotReturn404ForAuthFailure`, `TestGetReturnsContentMD5`, `TestStateMiddlewareStripsLockIDFromURL`.
+Test names: `TestGetReturnsStateBytes`, `TestGetReturns404ForMissingState`, `TestGetReturns404ForTombstonedState`, `TestGetReturns401WithoutAuth`, `TestGetReturns401ForWrongGroup`, `TestGetReturns403ForSuspendedGroup`, `TestGetDoesNotReturn404ForAuthFailure`, `TestGetReturnsContentMD5`, `TestStateMiddlewareStripsLockIDFromURL`, `TestReadStateReturnsCurrent`, `TestReadStateRejectsTombstoned`, `TestReadStateFailsClosedOnTamper`.
 
 Assertions:
 - A published state returns the exact bytes, `Content-Type: application/json`, and a correct base64 `Content-MD5`.
@@ -856,7 +882,7 @@ Expected: FAIL because the handlers do not exist.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/httpapi ./internal/store -run 'TestGet|TestReadState' -v`
+Run: `go test ./internal/httpapi ./internal/store -run 'TestGet|TestReadState|TestStateMiddleware' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -869,7 +895,7 @@ git commit -m "feat(httpapi): add Basic Auth and Terraform state reads"
 ### Task 2.3: Publication and `POST`/`PUT`
 
 **Files:**
-- Create: `internal/store/versions.go`, `internal/store/audit.go`
+- Create: `internal/store/versions.go`
 - Modify: `internal/httpapi/state.go`
 - Test: `internal/store/versions_test.go`, `internal/httpapi/state_test.go`
 
@@ -905,7 +931,7 @@ Read and validate the body before opening the transaction. Compute byte count an
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store -run TestPublish -v && go test ./internal/httpapi -run TestPost`
+Run: `go test ./internal/store -run 'TestPublish|TestPost' -v && go test ./internal/httpapi -run 'TestPostAndPut' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -991,7 +1017,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/store -run TestDelete -v`
+Run: `go test ./internal/store ./internal/httpapi -run TestDelete -v`
 Expected: FAIL because tombstoning does not exist.
 
 - [ ] **Step 3: Implement tombstoning**
@@ -1000,7 +1026,7 @@ In one `RunInTransaction`: recheck group/state/lock; if the state is absent or a
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store -run TestDelete -v`
+Run: `go test ./internal/store ./internal/httpapi -run TestDelete -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1097,12 +1123,13 @@ git commit -m "feat(hooks): enforce state invariants and hide protected fields"
 
 **Files:**
 - Create: `tests/smoke/`, rewrite `tests/main.tf`, `tests/Makefile`
-- Create: `.github/workflows/terraform-v2.yml`
+- Create: `tests/backends/main.tf`, `cmd/united/devseed.go`, `.github/workflows/terraform-v2.yml`, `.github/workflows/terraform-matrix.yml`
+- Modify: `mise.toml` (add `opentofu`)
 - Test: `tests/` harness
 
 - [ ] **Step 1: Write the failing harness**
 
-Point `tests/main.tf` at `http://localhost:8090/state/my-peoples/me` with `lock_address` and `unlock_address` on the same route. The harness creates a group and credential through a test-only setup command, exports the Basic Auth values, and runs `terraform init`, `plan`, `apply`, `state pull`, `destroy`, and a second `state pull`.
+Point `tests/main.tf` at `http://localhost:8090/state/{group-id}/me`, substituting the record ID that `dev-seed` prints, with `lock_address` and `unlock_address` on the same route. The harness creates the group and credential through `dev-seed`, exports the Basic Auth values, and runs `terraform init`, `plan`, `apply`, `refresh`, `state pull`, `destroy`, and a second `state pull`. Add `tests/backends/main.tf` for the migration test: a local backend fixture with a known state, then the same resources with the HTTP backend, switched with `terraform init -migrate-state`.
 
 - [ ] **Step 2: Run the harness to verify it fails**
 
@@ -1111,7 +1138,11 @@ Expected: FAIL until the setup command and route are wired.
 
 - [ ] **Step 3: Add the setup command and workflow**
 
-Add `united dev-seed` behind a build tag or a `DEV=true` guard that creates a group, owner, and credential in a test database and prints the Basic Auth values. The command must refuse to run without `DEV=true`. Add `.github/workflows/terraform-v2.yml` that starts the binary, runs the harness, and runs the migration test. Keep the smoke workflow for boot and health.
+Add `united dev-seed` as a hidden cobra subcommand in `cmd/united/devseed.go`, guarded by `DEV=true`, that calls `Store.CreateGroup`, prints the group record ID and the Basic Auth values, and refuses to run without `DEV=true`.
+
+Add `.github/workflows/terraform-v2.yml` that starts the binary and runs the harness, the migration test, and the lock matrix on Terraform 1.17. Add `.github/workflows/terraform-matrix.yml` with a matrix of Terraform 1.16 and 1.17 plus OpenTofu 1.12 and 1.13, triggered after the unit-test workflow succeeds, with `opentofu` added to `mise.toml`. The matrix covers the full harness, the migration test, the lock-payload matrix including the two `migration ... state` operations and an empty-body `UNLOCK`, the method matrix, the 15,000,000-byte limit at and one byte over, and force-unlock: OpenTofu succeeds, and Terraform is expected to fail because upstream ignores the supplied ID. Keep the smoke workflow for boot and health.
+
+The migration test archives a pre-switch `terraform state pull`, switches with `init -migrate-state`, then requires a post-switch `plan` with no changes and an identical `state list`. It also covers a failed destination POST, which must leave the source state and `.terraform/terraform.tfstate` untouched, and a retry.
 
 - [ ] **Step 4: Run the harness to verify it passes**
 
@@ -1122,7 +1153,7 @@ Expected: PASS for init, plan, apply, state pull, destroy, and the final state p
 
 ```bash
 git add tests .github/workflows/terraform-v2.yml
-git commit -m "test: add the Terraform v2 integration harness"
+git commit -m "ci: add the Terraform v2 integration harness and client matrix"
 ```
 
 ---
@@ -1141,6 +1172,8 @@ Slice gate: the rule matrix passes for anonymous, verified non-member, member, o
 - Produces: membership-scoped list/view rules and owner-scoped update rules on every domain collection.
 
 - [ ] **Step 1: Write the failing rule matrix**
+
+Test names: `TestRulesMatrix`, `TestRulesLockedCollections`.
 
 For each collection and each principal, assert allowed/denied on list, view, create, update, and delete. The principals are anonymous, verified non-member, member, owner, and superuser. Cover two groups and a user in both.
 
@@ -1168,11 +1201,12 @@ git commit -m "feat(migrations): add membership-scoped collection rules"
 ### Task 3.2: Group creation and one-time credential secret
 
 **Files:**
-- Create: `internal/store/groups.go`, `internal/hooks/groups.go`
+- Create: `internal/hooks/groups.go`
+- Modify: `internal/store/groups.go`
 - Test: `internal/store/groups_test.go`, `internal/hooks/groups_test.go`
 
 **Interfaces:**
-- Produces: `Store.CreateGroup(ctx, actor, displayName) (Group, secret, error)` and the `POST /api/collections/groups/records` hook.
+- Produces: the `POST /api/collections/groups/records` hook and the one-time `X-United-Credential` response header, on top of the slice 2 `Store.CreateGroup`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1192,7 +1226,7 @@ Expected: FAIL because group creation does not exist.
 
 - [ ] **Step 3: Implement creation**
 
-Use `RunInTransaction`. Generate the group data key, wrap it with the master key, generate the username and password, set the password with `Record.SetPassword`, save the credential, create the owner membership, and insert the audit event. In the `OnRecordCreateRequest` hook for `groups`, call `Store.CreateGroup`, set `X-United-Credential` on the response to the one-time secret, and return the created group as JSON without calling `e.Next()`. The header is the only place the secret appears; it is never persisted, never in the schema, and never in list or view responses.
+Reuse the slice 2 `Store.CreateGroup`, which already commits the group, owner membership, wrapped data key, credential, and `group_created` audit event in one transaction. In the `OnRecordCreateRequest` hook for `groups`, authorize the caller, call `Store.CreateGroup`, set `X-United-Credential` on the response to the one-time secret, and return the created group as JSON without calling `e.Next()`. The deployment's CORS configuration must expose that header. The header is the only place the secret appears; it is never persisted, never in the schema, and never in list or view responses.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1228,7 +1262,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/store -run 'TestInvite|TestAccept|TestFinalOwner|TestLeave|TestPromote' -v`
+Run: `go test ./internal/store ./internal/hooks -run 'TestInvite|TestInvitation|TestAccept|TestFinalOwner|TestLeave|TestPromote|TestMembership' -v`
 Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
@@ -1270,7 +1304,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/store -run 'TestRotate|TestDisable|TestEnable|TestCredentialGuard' -v`
+Run: `go test ./internal/store -run 'TestRotate|TestRotation|TestDisable|TestEnable|TestCredentialGuard' -v`
 Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
@@ -1279,7 +1313,7 @@ Use the write-only `rotate_credential` intent field. Validate the actor and targ
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store -run 'TestRotate|TestDisable|TestEnable|TestCredentialGuard' -v`
+Run: `go test ./internal/store -run 'TestRotate|TestRotation|TestDisable|TestEnable|TestCredentialGuard' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1333,7 +1367,8 @@ git commit -m "feat: add group suspension, retirement, retention, and lease cont
 ### Task 3.6: Tombstone and restore administration
 
 **Files:**
-- Modify: `internal/store/states.go`, `internal/hooks/states_admin.go`
+- Modify: `internal/store/states.go`
+- Create: `internal/hooks/states_admin.go`
 - Test: `internal/store/states_admin_test.go`
 
 **Interfaces:**
@@ -1374,7 +1409,8 @@ git commit -m "feat: add owner tombstone and state restoration"
 ### Task 3.7: Audit catalog and PocketBase log mirror
 
 **Files:**
-- Modify: `internal/store/audit.go`, `internal/hooks/logs.go`
+- Modify: `internal/store/audit.go`
+- Create: `internal/hooks/logs.go`
 - Test: `internal/store/audit_test.go`, `internal/hooks/logs_test.go`
 
 **Interfaces:**
@@ -1483,8 +1519,8 @@ Test names: `TestGuardSingleFlight`, `TestGuardShutdown`, `TestCronRegistration`
 Assertions:
 - A second concurrent `Try` returns false and emits `united.cleanup.skipped{outcome="overlap"}`.
 - Shutdown stops new items and lets the in-flight item finish.
-- `retention-cleanup` is registered as `*/15 * * * *` and `orphan-reconciliation` as `17 3 * * *`.
-- No catch-up run starts at boot.
+- `retention-cleanup` is registered as `*/15 * * * *`, `orphan-reconciliation` as `17 3 * * *`, and `integrity-scan` as `37 4 * * *`.
+- No catch-up run starts at boot for cleanup or reconciliation; the integrity scan has its own run shortly after serve.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1572,7 +1608,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/jobs -run TestOrphan -v`
+Run: `go test ./internal/jobs -run 'TestOrphan|TestBrake|TestForced' -v`
 Expected: FAIL because reconciliation does not exist.
 
 - [ ] **Step 3: Implement reconciliation**
@@ -1581,7 +1617,7 @@ Use `app.NewFilesystem()`, `List(collection.Id + "/")`, and `Delete(key)`. Build
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/jobs -run TestOrphan -v`
+Run: `go test ./internal/jobs -run 'TestOrphan|TestBrake|TestForced' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1595,6 +1631,7 @@ git commit -m "feat(jobs): add orphan reconciliation with a mass-deletion brake"
 
 **Files:**
 - Create: `internal/jobs/integrity.go`
+- Modify: `internal/jobs/jobs.go`
 - Test: `internal/jobs/integrity_test.go`
 
 **Interfaces:**
@@ -1602,7 +1639,7 @@ git commit -m "feat(jobs): add orphan reconciliation with a mass-deletion brake"
 
 - [ ] **Step 1: Write the failing tests**
 
-Test names: `TestIntegrityChecksCurrentOnly`, `TestIntegrityReportsMissing`, `TestIntegrityReportsDecrypt`, `TestIntegrityReportsLength`, `TestIntegrityReportsDigest`, `TestIntegrityNeverMutates`.
+Test names: `TestIntegrityChecksCurrentOnly`, `TestIntegrityReportsMissing`, `TestIntegrityReportsDecrypt`, `TestIntegrityReportsLength`, `TestIntegrityReportsDigest`, `TestIntegrityNeverMutates`, `TestIntegrityScheduled`, `TestIntegrityRunsAfterServe`.
 
 Assertions:
 - Every active current version is checked; non-current versions are not.
@@ -1617,7 +1654,7 @@ Expected: FAIL because the scan does not exist.
 
 - [ ] **Step 3: Implement the scan**
 
-Iterate active logical states, decrypt and verify each current version, emit events and metrics, and never write.
+Register `integrity-scan` in `jobs.go`. Iterate active logical states, decrypt and verify each current version, emit events and metrics, and never write. Run once shortly after `OnServe` and then on the cron schedule; a superuser can trigger it through `POST /api/crons/integrity-scan`, and the single-flight guard prevents overlap.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1672,7 +1709,7 @@ Expected: FAIL because the CLI does not exist.
 
 - [ ] **Step 3: Implement the skeleton**
 
-Add subcommands to `app.RootCmd` before `Execute`. In each `RunE`, call `app.Bootstrap()` and `app.RunAllMigrations()`, then the command. Never call `apis.Serve`.
+Add subcommands to `app.RootCmd` before `Execute`. `app.Execute()` bootstraps the app, so do not call `app.Bootstrap()` again; a second call re-fires every `OnBootstrap` hook. In each `RunE`, call `app.RunAllMigrations()`, then `wire.keyGate(app, cfg)` with `config.ModeCommand`, then the command body. Never call `apis.Serve` and never initialize telemetry.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1708,7 +1745,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/offline -run TestRekey -v`
+Run: `go test ./internal/offline -run 'TestRekey|TestRepair' -v`
 Expected: FAIL because rekey does not exist.
 
 - [ ] **Step 3: Implement rekey and repair**
@@ -1717,7 +1754,7 @@ Use `RunInTransaction`, `crypto.UnwrapGroupKey`/`WrapGroupKey`, and the audit ca
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/offline -run TestRekey -v`
+Run: `go test ./internal/offline -run 'TestRekey|TestRepair' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1832,23 +1869,23 @@ This is not a slice. After slice 5 passes, run the release-only gates and publis
 
 | Decision | Slice | Named tests | Gate |
 | --- | --- | --- | --- |
-| #406 wire contract | 2 | `TestGet*`, `TestPost*`, `TestLock*`, `TestMethodMatrix*` | Slice 2 gate |
+| #406 wire contract | 2 | `TestGet*`, `TestPublish*`, `TestPostAndPut*`, `TestLock*`, `TestUnlock*`, `TestMethodMatrix*` | Slice 2 gate |
 | #407 transactions and files | 2, 4 | `TestPublishRollsBack*`, `TestOrphan*`, `TestIntegrity*` | Slice 2, 4 gates |
 | #408 auth extension points | 2 | `TestVerifyCredential*` | Slice 2 gate |
 | #409 roles and membership | 3 | `TestInvite*`, `TestAccept*`, `TestFinalOwner*` | Slice 3 gate |
 | #410 credential lifecycle | 2, 3 | `TestVerifyCredential*`, `TestRotate*`, `TestDisable*` | Slice 2, 3 gates |
 | #411 group retirement | 3, 4 | `TestRetirement*`, `TestGroupPurge*` | Slice 3, 4 gates |
 | #412 deletion and retention | 2, 3, 4 | `TestDelete*`, `TestRestore*`, `TestRetention*` | Slice 2, 3, 4 gates |
-| #413 key lifecycle | 1, 5 | `TestParseMasterKey`, `TestSentinel*`, `TestRekey*` | Slice 1, 5 gates |
-| #414 lock leases | 2 | `TestLock*`, `TestUnlock*` | Slice 2 gate |
+| #413 key lifecycle | 1, 5 | `TestParseMasterKey`, `TestSentinel*`, `TestRekey*`, `TestBootAfterRekey` | Slice 1, 5 gates |
+| #414 lock leases | 2 | `TestLock*`, `TestUnlock*`, `TestPublish*`, `TestDelete*` | Slice 2 gate |
 | #415 persistence model | 1, 2 | `TestMigrationSchema`, `TestPublish*`, `TestVersionFieldsImmutable` | Slice 1, 2 gates |
 | #416 administration boundary | 1, 3 | `TestRules*`, `TestCreateGroup*` | Slice 1, 3 gates |
-| #417 rollout and acceptance | 5, release | `TestRestoreDrill`, release checklist | Release |
-| #418 Terraform/OpenTofu | 2, release | `TestMethodMatrix*`, client matrix | Slice 2, release |
+| #417 rollout and acceptance | 2, 5, release | migration harness, `tests/restore/drill.sh`, release checklist | Slice 2, 5 gates, release |
+| #418 Terraform/OpenTofu | 2 | `TestMethodMatrix*`, `terraform-matrix.yml` | Slice 2 gate |
 | #419 credential storage | 2, 3 | `TestVerifyCredential*`, `TestRotate*` | Slice 2, 3 gates |
 | #420 audit and abuse | 2, 3 | `TestAudit*`, `TestVerifyCredentialUnknownUser*` | Slice 2, 3 gates |
 | #421 cleanup operations | 4 | `TestPurge*`, `TestBatch*`, `TestBrake*`, `TestOrphan*` | Slice 4 gate |
-| #560 documentation | 1, release | Hugo build, link checks | Slice 1, release |
+| #560 documentation | 1, 3, release | Hugo build, `docs:check`, link checks | Slice 1, 3 gates, release |
 | #561 telemetry | 1, 2 | `TestRegistry*`, `TestSetup*`, `TestRedaction*` | Slice 1, 2 gates |
 | #562 boundaries and slicing | all | build, depguard, slice gates | Every PR |
 
