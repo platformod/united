@@ -29,6 +29,7 @@
 - `HEAD` and `OPTIONS` on state routes return `405` with `Allow`; the CORS middleware is unbound on the state route group.
 - Custom state routes bind `apis.BodyLimit` to the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB of overhead. PocketBase's 32 MiB default body limit is not the state limit.
 - Superusers are trusted. No collection rule, hook, or hidden field is a containment boundary against a superuser; validators exist for data correctness and accident prevention only (ADR 0002).
+- Deactivating a user sets `disabled=true`, rotates the user's token key so every existing session fails immediately, preserves memberships and pending invitations, and is rejected when it would remove a final active owner (ADR 0003).
 
 ## Review Focus
 
@@ -72,6 +73,7 @@ internal/store/groups.go
 internal/store/memberships.go
 internal/store/credential_lifecycle.go
 internal/store/groups_lifecycle.go
+internal/store/users.go
 internal/httpapi/router.go
 internal/httpapi/auth.go
 internal/httpapi/state.go
@@ -88,6 +90,7 @@ internal/hooks/memberships.go
 internal/hooks/credentials.go
 internal/hooks/groups_lifecycle.go
 internal/hooks/states_admin.go
+internal/hooks/users.go
 internal/jobs/guard.go
 internal/jobs/jobs.go
 internal/jobs/cleanup.go
@@ -638,6 +641,7 @@ Use `tests.NewTestApp(t.TempDir())` from `github.com/pocketbase/pocketbase/tests
 - `audit_events` has indexes on `(group_id, created)`, `(event_type, created)`, and `(actor_id, created)`.
 - `state_versions` has an index on `(logical_state, created, id)`; `logical_states` has indexes on `non_current_at`, `lock_id`, and `lock_expires_at`.
 - `system_settings` has exactly one record with `master_key_generation=1` and `invitation_ttl_days=7`.
+- The built-in `users` collection has a `disabled` bool defaulting to false, and `authRule` is `verified = true && disabled != true`.
 - Every domain collection has `nil` create/update/delete rules in this slice; reads are also `nil` until Task 3.1.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -647,7 +651,7 @@ Expected: FAIL because the migration does not exist.
 
 - [ ] **Step 3: Implement the migration**
 
-Create the collections with `core.NewBaseCollection`. Use `core.TextField`, `core.SelectField`, `core.NumberField`, `core.BoolField`, `core.DateField`, `core.RelationField`, `core.FileField`, `core.PasswordField`, and `core.JSONField`. Use `app.FindCollectionByNameOrId("users")` for the built-in user relation. Create parents before children so relation IDs resolve. The `logical_states.current_version` relation is circular, so create `logical_states` without it, create `state_versions`, then add the relation field to `logical_states` and save it again. Add indexes with `Collection.AddIndex`. Seed `system_settings` with one record.
+Create the collections with `core.NewBaseCollection`. Use `core.TextField`, `core.SelectField`, `core.NumberField`, `core.BoolField`, `core.DateField`, `core.RelationField`, `core.FileField`, `core.PasswordField`, and `core.JSONField`. Use `app.FindCollectionByNameOrId("users")` for the built-in user relation. Create parents before children so relation IDs resolve. The `logical_states.current_version` relation is circular, so create `logical_states` without it, create `state_versions`, then add the relation field to `logical_states` and save it again. Add indexes with `Collection.AddIndex`. Seed `system_settings` with one record. Find the built-in `users` collection with `app.FindCollectionByNameOrId("users")`, add the `disabled` field, set its rules, and save it.
 
 Field set:
 
@@ -660,6 +664,7 @@ Field set:
 - `audit_events`: `event_type` text required max 64; `schema_version` number required min 1 only int; `actor_type` select `user|superuser|terraform_credential|system|offline_operator`; `actor_id` text required; `subject_type` text required; `subject_id` text required; `group_id` text optional; `request_id` text optional; `details` json optional max 64 KiB; validators enforce the typed shape, and an event with no typed details stores `{}`; autodates.
 - `system_settings`: `master_key_generation` number required min 1 only int; `key_sentinel` text hidden max 4096; `invitation_ttl_days` number required min 1 max 90; autodates.
 - `retired_groups`: `group_id` text required; `credential_username` text required; `created` date required; `retirement_requested_at` date required; `purged_at` date required.
+- `users` (PocketBase built-in, extended): add `disabled` bool default false; set `authRule` to `verified = true && disabled != true`; registration create open to guests; list, view, and update self only. Field-level update control belongs to the Task 3.9 hook.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1163,7 +1168,7 @@ git commit -m "ci: add the Terraform v2 integration harness and client matrix"
 
 ## Slice 3: Administration and Lifecycle
 
-Slice gate: the rule matrix passes for anonymous, verified non-member, member, owner, and superuser across every collection; lifecycle invariants and the full audit catalog pass.
+Slice gate: the rule matrix passes for anonymous, verified non-member, member, owner, and superuser across every collection; lifecycle invariants, the account lifecycle, and the full audit catalog pass.
 
 ### Task 3.1: Rules migration
 
@@ -1187,7 +1192,7 @@ Expected: FAIL because all rules are still `nil`.
 
 - [ ] **Step 3: Implement the rules migration**
 
-Set list/view rules to membership-scoped expressions, update rules to owner-scoped expressions where #416 allows them, and leave create/delete locked except for these paths: `groups` create for any authenticated user; `group_invitations` update for the targeted user accepting; `group_invitations` delete for an owner or the target revoking; `group_memberships` delete for an owner or the member leaving; and `users` self-update for name, email, password, and `disabled=true`. Keep `audit_events`, `retired_groups`, and `system_settings` superuser-only. Add the expressions as constants and test them with the real query engine.
+Set list/view rules to membership-scoped expressions, update rules to owner-scoped expressions where #416 allows them, and leave create/delete locked except for these paths: `groups` create for any authenticated user; `group_invitations` update for the targeted user accepting; `group_invitations` delete for an owner or the target revoking; `group_memberships` delete for an owner or the member leaving; `users` guest registration create, self-only list/view/update, with the field allowlist and lifecycle transitions enforced by the Task 3.9 hook. Keep `audit_events`, `retired_groups`, and `system_settings` superuser-only. Add the expressions as constants and test them with the real query engine.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1425,6 +1430,7 @@ Test names: `TestAuditCatalogComplete`, `TestAuditDetailsValidated`, `TestAuditA
 
 Assertions:
 - Every event type has a `schema_version=1` details validator and an actor/subject.
+- `user_deactivated`, `user_reactivated`, `user_deleted`, `user_password_changed`, and `owner_recovered` are part of the catalog.
 - Unknown details fields or missing required fields are rejected.
 - Append-only holds for every non-superuser principal: no update or delete path exists for anonymous, member, owner, or service code. A superuser can alter or delete audit rows as a trusted operator, and the trust boundary is documented rather than enforced (ADR 0002).
 - The mirror forwards only `pb.type`, `pb.method`, path without query, `pb.status`, `pb.exec_time_ms`, `pb.auth`, `pb.user_ip`, `pb.remote_ip`, and `pb.error`.
@@ -1467,7 +1473,7 @@ Run `hugo --panicOnWarning --printPathWarnings` in `site/` and expect it to fail
 
 Assertions after the pages exist:
 - `trust-boundary.md` states that superusers bypass every collection rule and record hook, that audit rows are not tamper-evident against them, and that validators are for correctness, not containment.
-- `harden-deployment.md` states that superuser access is for setup and backup only, that the dashboard and superuser API are reachable only over TLS behind an isolated edge, and that recovery from superuser misuse is restore of the paired backup set.
+- `harden-deployment.md` states that superuser access is for setup and backup only, that the dashboard and superuser API are reachable only over TLS behind an isolated edge, that recovery from superuser misuse is restore of the paired backup set, and that registration verification requires SMTP configured through PocketBase `_params`.
 - `configuration.md` names `UNITED_MASTER_KEY`, `UNITED_MASTER_KEY_GENERATION`, `UNITED_MAX_STATE_SIZE`, `UNITED_DATA_DIR`, `UNITED_LISTEN_ADDR`, `UNITED_LOCK_LEASE_DURATION`, `TELEMETRY_ENABLED`, `UNITED_ACTOR`, and `LOG_LEVEL` with their bounds and defaults.
 
 - [ ] **Step 2: Run the docs check to verify it fails**
@@ -1489,6 +1495,52 @@ Expected: PASS with zero warnings.
 ```bash
 git add site/content
 git commit -m "docs: document the superuser trust boundary and deployment hardening"
+```
+
+### Task 3.9: User account lifecycle
+
+**Files:**
+- Create: `internal/hooks/users.go`, `internal/store/users.go`, `site/content/how-to/manage-accounts.md`
+- Modify: `internal/migrations/202611210001_schema.go`
+- Test: `internal/hooks/users_test.go`, `internal/store/users_test.go`
+
+**Interfaces:**
+- Produces: `Store.DeactivateUser(ctx context.Context, actor Actor, userID string) error`, `Store.ActivateUser(ctx context.Context, actor Actor, userID string) error`, `Store.DeleteUser(ctx context.Context, actor Actor, userID string) error`, the `users` request hooks, and the `user_deactivated`, `user_reactivated`, `user_deleted`, `user_password_changed`, and `owner_recovered` audit events (ADR 0003).
+
+- [ ] **Step 1: Write the failing tests**
+
+Test names: `TestDeactivateBarsAuthentication`, `TestDeactivateRevokesSessions`, `TestDeactivatePreservesMemberships`, `TestFinalOwnerCannotDeactivate`, `TestFinalOwnerCannotDelete`, `TestFinalOwnerAllowedWhileGroupSuspended`, `TestReactivationSuperuserOnly`, `TestDeleteRemovesMembershipsAndInvitations`, `TestSelfUpdateFieldAllowlist`, `TestExceptionalOwnerRecovery`, `TestUserLifecycleAudit`.
+
+Assertions:
+- Deactivation sets `disabled=true`, rotates `tokenKey`, and leaves memberships and invitations intact; a password login fails with `401`, and a token minted before deactivation fails on its next use.
+- Deactivation or deletion returns `409` when the user is the only active owner of any active or pending-retirement group, and succeeds with another active owner or while that group is suspended.
+- Reactivation is superuser-only, clears `disabled`, and leaves memberships intact; the user signs in again.
+- Deletion removes the user, every membership, and every pending invitation, and is rejected by the final-owner guard.
+- A self-update may change name, email, password, or set `disabled=true`; it may not set `disabled=false`, change another user, or change role-bearing relations.
+- Exceptional recovery promotes an existing member or adds an existing user as owner only while the group is suspended, and writes `owner_recovered` with the operator as actor.
+- Every transition writes its audit event in the same transaction and never stores a password, hash, or token.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `go test ./internal/hooks ./internal/store -run 'TestDeactivate|TestFinalOwner|TestReactivation|TestDeleteRemoves|TestSelfUpdate|TestExceptional|TestUserLifecycle' -v`
+Expected: FAIL because the users hook and store methods do not exist.
+
+- [ ] **Step 3: Implement the lifecycle**
+
+Bind `OnRecordUpdateRequest` and `OnRecordDeleteRequest` for `users`. Validate the actor (self or superuser for deactivation and deletion, superuser for reactivation), run the final-owner query inside the same transaction, call `RefreshTokenKey()` on deactivation, and write the audit event. Bind `OnRecordCreateRequest` for guest registration so it never grants a group. Emit `user_password_changed` when the request body carries a password change. Add the exceptional-recovery path through `group_memberships` creation or promotion, gated on `groups.status=suspended`.
+
+Write `manage-accounts.md` covering registration and SMTP, deactivation and sign-out, reactivation, deletion, final-owner rules, and exceptional recovery.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `go test ./internal/hooks ./internal/store -run 'TestDeactivate|TestFinalOwner|TestReactivation|TestDeleteRemoves|TestSelfUpdate|TestExceptional|TestUserLifecycle' -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/hooks/users.go internal/hooks/users_test.go internal/store/users.go internal/store/users_test.go internal/migrations site/content/how-to/manage-accounts.md
+git commit -m "feat: enforce the user account lifecycle"
 ```
 
 ---
@@ -1875,18 +1927,18 @@ This is not a slice. After slice 5 passes, run the release-only gates and publis
 | #406 wire contract | 2 | `TestGet*`, `TestPublish*`, `TestPostAndPut*`, `TestLock*`, `TestUnlock*`, `TestMethodMatrix*` | Slice 2 gate |
 | #407 transactions and files | 2, 4 | `TestPublishRollsBack*`, `TestOrphan*`, `TestIntegrity*` | Slice 2, 4 gates |
 | #408 auth extension points | 2 | `TestVerifyCredential*` | Slice 2 gate |
-| #409 roles and membership | 3 | `TestInvite*`, `TestAccept*`, `TestFinalOwner*` | Slice 3 gate |
+| #409 roles and membership | 3 | `TestInvite*`, `TestAccept*`, `TestFinalOwner*`, `TestDeactivate*`, `TestExceptional*` | Slice 3 gate |
 | #410 credential lifecycle | 2, 3 | `TestVerifyCredential*`, `TestRotate*`, `TestDisable*` | Slice 2, 3 gates |
 | #411 group retirement | 3, 4 | `TestRetirement*`, `TestGroupPurge*` | Slice 3, 4 gates |
 | #412 deletion and retention | 2, 3, 4 | `TestDelete*`, `TestRestore*`, `TestRetention*` | Slice 2, 3, 4 gates |
 | #413 key lifecycle | 1, 5 | `TestParseMasterKey`, `TestSentinel*`, `TestRekey*`, `TestBootAfterRekey` | Slice 1, 5 gates |
 | #414 lock leases | 2 | `TestLock*`, `TestUnlock*`, `TestPublish*`, `TestDelete*` | Slice 2 gate |
 | #415 persistence model | 1, 2 | `TestMigrationSchema`, `TestPublish*`, `TestVersionFieldsImmutable` | Slice 1, 2 gates |
-| #416 administration boundary | 1, 3 | `TestRules*`, `TestCreateGroup*` | Slice 1, 3 gates |
+| #416 administration boundary | 1, 3 | `TestRules*`, `TestCreateGroup*`, `TestSelfUpdate*` | Slice 1, 3 gates |
 | #417 rollout and acceptance | 2, 5, release | migration harness, `tests/restore/drill.sh`, release checklist | Slice 2, 5 gates, release |
 | #418 Terraform/OpenTofu | 2 | `TestMethodMatrix*`, `terraform-matrix.yml` | Slice 2 gate |
 | #419 credential storage | 2, 3 | `TestVerifyCredential*`, `TestRotate*` | Slice 2, 3 gates |
-| #420 audit and abuse | 2, 3 | `TestAudit*`, `TestVerifyCredentialUnknownUser*` | Slice 2, 3 gates |
+| #420 audit and abuse | 2, 3 | `TestAudit*`, `TestUserLifecycle*`, `TestVerifyCredentialUnknownUser*` | Slice 2, 3 gates |
 | #421 cleanup operations | 4 | `TestPurge*`, `TestBatch*`, `TestBrake*`, `TestOrphan*` | Slice 4 gate |
 | #560 documentation | 1, 3, release | Hugo build, `docs:check`, link checks | Slice 1, 3 gates, release |
 | #561 telemetry | 1, 2 | `TestRegistry*`, `TestSetup*`, `TestRedaction*` | Slice 1, 2 gates |

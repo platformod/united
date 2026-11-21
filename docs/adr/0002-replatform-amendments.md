@@ -82,6 +82,7 @@ Tests are scoped to the principal they name: "append-only for non-superuser prin
   - a new documentation task and release-review line for the operator trust boundary;
   - Task 5.2: re-encrypt the sentinel during global rekey (an unrelated blocker found in the same review).
 - `CONTEXT.md` needs the lease entry to say a successful state write may extend a live lease, and the audit entry to record the superuser trust boundary.
+- A fifth amendment, [ADR 0003](0003-user-account-lifecycle.md), covers the user account lifecycle that this ADR does not.
 - The amendments are posted as comments on #414, #416, and #562, and noted on the #405 map.
 
 ## Considered Options

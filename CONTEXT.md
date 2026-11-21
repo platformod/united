@@ -113,7 +113,7 @@ A human identity that may belong to multiple groups through separate memberships
 _Avoid_: Member, operator
 
 **Deactivated user**:
-A user whose authentication is barred while their memberships and pending invitations remain intact; reactivation restores access.
+A user whose authentication is barred and whose sessions are revoked while their memberships and pending invitations remain intact; reactivation restores access and the user signs in again.
 _Avoid_: Disabled account, suspended user, removed member
 
 **Membership**:
