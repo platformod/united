@@ -164,6 +164,10 @@ _Avoid_: Physical object deletion, tombstoning, key rotation
 An immutable, permanently retained record of a security-significant administrative action or state-authority transition, available only to system operators and preserved after group retirement.
 _Avoid_: Request log, metric
 
+**Operational event**:
+A non-permanent record of a routine or failed operation, such as a lock outcome or an authentication failure, that may carry internal identifiers, routes, and usernames but never credentials or state contents, and carries no security-audit authority.
+_Avoid_: Security audit event, audit record
+
 **State integrity scan**:
 A background verification that every current committed state version's stored object exists, decrypts, and matches its recorded byte count and SHA-256, reporting failures without changing state or metadata.
 _Avoid_: Orphan scan, restore validation, reconciliation
