@@ -1815,7 +1815,7 @@ git commit -m "feat(offline): add full-history verify and forced orphan cleanup"
 - Test: `internal/wire/keygate_test.go`, `tests/restore/drill.sh`
 
 **Interfaces:**
-- Produces: the first-boot sentinel rule, the mismatch refusal, the backup pairing checklist, and the restore drill.
+- Produces: `wire.keyGate(app core.App, cfg *config.Config) error`, the first-boot sentinel rule, the mismatch refusal, the backup pairing checklist, and the restore drill.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1837,7 +1837,7 @@ Expected: FAIL because the corrupt-sentinel, missing-sentinel-with-groups, confi
 
 - [ ] **Step 3: Implement the gate and drill**
 
-Move the gate to `wire.keyGate(app)`, called from `OnServe` before `e.Next()` (application migrations have run by then; `OnBootstrap` runs before they do) and from each offline command after `RunAllMigrations()`. On boot: load `system_settings`; if `key_sentinel` is empty and no group has a wrapped key, write the configured generation and `crypto.NewSentinel`, then start; if the sentinel is empty but wrapped keys exist, refuse; otherwise compare `master_key_generation` and `CheckSentinel` and refuse on either mismatch. The drill script documents the file snapshot before the database backup and the full-history verify.
+Implement the gate as `wire.keyGate(app, cfg) error`, called from `OnServe` before `e.Next()` (application migrations have run by then; `OnBootstrap` runs before they do) and from each offline command after `RunAllMigrations()`. On boot: load `system_settings`; if `key_sentinel` is empty and no group has a wrapped key, write the configured generation and `crypto.NewSentinel`, then start; if the sentinel is empty but wrapped keys exist, refuse; otherwise compare `master_key_generation` and `CheckSentinel` and refuse on either mismatch. The drill script documents the file snapshot before the database backup and the full-history verify.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
