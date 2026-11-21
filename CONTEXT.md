@@ -163,3 +163,7 @@ _Avoid_: Physical object deletion, tombstoning, key rotation
 **Security audit event**:
 An immutable, permanently retained record of a security-significant administrative action or state-authority transition, available only to system operators and preserved after group retirement.
 _Avoid_: Request log, metric
+
+**State integrity scan**:
+A background verification that every current committed state version's stored object exists, decrypts, and matches its recorded byte count and SHA-256, reporting failures without changing state or metadata.
+_Avoid_: Orphan scan, restore validation, reconciliation
