@@ -176,6 +176,18 @@ _Avoid_: Request log, metric
 A non-permanent record of a routine or failed operation, such as a lock outcome or an authentication failure, that may carry internal identifiers, routes, and usernames but never credentials or state contents, and carries no security-audit authority.
 _Avoid_: Security audit event, audit record
 
+**Telemetry**:
+The optional traces, metrics, and logs emitted by United's own code through OpenTelemetry, exported only when configured and never carrying credentials, keys, lock identifiers, or state contents.
+_Avoid_: Audit record, monitoring data, PocketBase logs
+
+**Alert contract**:
+The documented set of stable telemetry signals and suggested conditions that the hosting platform may alert on; United does not evaluate thresholds, throttle, or page.
+_Avoid_: Alert rule, paging policy, SLO
+
+**Operational event catalog**:
+The registry of stable operational-event names, levels, outcomes, and attributes that United emits; additions are compatible and consumers ignore unknown signals.
+_Avoid_: Log schema, event list, audit catalog
+
 **State integrity scan**:
 A background verification that every current committed state version's stored object exists, decrypts, and matches its recorded byte count and SHA-256, reporting failures without changing state or metadata.
 _Avoid_: Orphan scan, restore validation, reconciliation
