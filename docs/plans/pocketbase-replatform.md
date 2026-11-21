@@ -729,16 +729,19 @@ func main() {
 		return wire.Register(app, wire.Deps{Config: cfg, Logger: logger, Shutdown: shutdown})
 	}
 	if f := serve.PersistentFlags().Lookup("http"); f != nil {
-		f.DefValue, _ = f.Value.Set(base.ListenAddr)
+		f.DefValue = base.ListenAddr
+		if err := f.Value.Set(base.ListenAddr); err != nil { ... }
 	}
 	app.RootCmd.AddCommand(serve)
+	app.RootCmd.AddCommand(cmd.NewSuperuserCommand(app))
+	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
 	offline.Register(app.RootCmd, ...) // config.ModeCommand; never OTel
 
 	if err := app.Execute(); err != nil { ... }
 }
 ```
 
-`app.Execute()` does not register `serve` or `superuser` (that is `app.Start()`), so United adds `cmd.NewServeCommand` itself. Configuration and telemetry are loaded inside the serve command, never before command dispatch, so an offline command cannot start OTel. `HideStartBanner` has no effect under `Execute()` and is not set.
+`app.Execute()` does not register `serve` or `superuser` (that is `app.Start()`), so United adds `cmd.NewServeCommand`, `cmd.NewSuperuserCommand`, and the `migratecmd` plugin itself. PocketBase v0.40.3 has no `backup` CLI command; backups are the superuser HTTP routes and the `backups.cron` setting. Configuration and telemetry are loaded inside the serve command, never before command dispatch, so an offline command cannot start OTel. `HideStartBanner` has no effect under `Execute()` and is not set.
 
 `wire.Register` binds `OnServe` to the key gate, route registration, and cron registration, `OnTerminate` to shutdown with a 5-second flush timeout, and imports `internal/migrations` for its side effect. It does not bind `OnBootstrap`; application migrations have not run at that point (ADR 0002). In slice 1, `OnServe` registers no custom routes.
 
@@ -817,7 +820,7 @@ Assertions:
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test ./internal/store -run TestVerifyCredential -v`
+Run: `go test ./internal/store -run 'TestVerifyCredential|TestCreateGroupFixture' -v`
 Expected: FAIL because the store does not exist.
 
 - [ ] **Step 3: Implement the harness and verifier**
@@ -828,7 +831,7 @@ Implement `Store.CreateGroup` in the same task because the harness needs it: one
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store -run TestVerifyCredential -v`
+Run: `go test ./internal/store -run 'TestVerifyCredential|TestCreateGroupFixture' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -931,7 +934,7 @@ Read and validate the body before opening the transaction. Compute byte count an
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store -run 'TestPublish|TestPost' -v && go test ./internal/httpapi -run 'TestPostAndPut' -v`
+Run: `go test ./internal/store -run TestPublish -v && go test ./internal/httpapi -run TestPostAndPut -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1271,7 +1274,7 @@ Use request hooks for the API paths and store methods for the transactions. Vali
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/store ./internal/hooks -run 'TestInvite|TestAccept|TestFinalOwner|TestLeave|TestPromote' -v`
+Run: `go test ./internal/store ./internal/hooks -run 'TestInvite|TestInvitation|TestAccept|TestFinalOwner|TestLeave|TestPromote|TestMembership' -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1478,7 +1481,7 @@ Write the three pages in the Diataxis modes they belong to, link them from the e
 
 - [ ] **Step 4: Run the docs check to verify it passes**
 
-Run: `cd site && hugo --panicOnWarning --printPathWarnings`
+Run: `mise run docs:check`
 Expected: PASS with zero warnings.
 
 - [ ] **Step 5: Commit**
@@ -1838,7 +1841,7 @@ Move the gate to `wire.keyGate(app)`, called from `OnServe` before `e.Next()` (a
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `go test ./internal/wire -run 'TestFirstBoot|TestSecondBoot|TestGeneration|TestWrongKey' -v`
+Run: `go test ./internal/wire -run 'TestFirstBoot|TestMissingSentinel|TestSecondBoot|TestGeneration|TestWrongKey|TestCorruptSentinel|TestBootAfterRekey' -v`
 Expected: PASS. Run `tests/restore/drill.sh` separately and record the result.
 
 - [ ] **Step 5: Commit**
