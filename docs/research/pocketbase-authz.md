@@ -3,8 +3,8 @@
 **Ticket:** [#408 Establish PocketBase authentication and authorization extension points](https://github.com/platformod/united/issues/408)
 **Parent:** [#405 Plan United's PocketBase-only replatform](https://github.com/platformod/united/issues/405)
 **Branch:** `research/pocketbase-authz`
-**Research date:** 2026-09-05
-**PocketBase sources:** current documentation v0.40.2 and the current `master` source tree.
+**Research date:** 2026-09-05; Base-password follow-up verified 2026-09-07
+**PocketBase sources:** documentation v0.40.2, PocketBase v0.40.3 source and tests, and the upstream maintainer discussion linked below.
 
 ## Scope and constraints
 
@@ -29,7 +29,7 @@ users (Auth)
   └── memberships (Base or relation collection) ──> groups (Base)
                                                    └── terraform_credentials (Base)
                                                         - identity/name
-                                                        - password (design choice; see below)
+                                                        - password (native hidden PasswordField)
                                                         - enabled/revoked/rotatedAt
                                                         - group relation
 
@@ -157,7 +157,11 @@ PocketBase exposes `record.ValidatePassword(pass)`. The current password-auth im
 
 The important reusable primitive is `ValidatePassword`, not the normal auth endpoint. United can locate a credential record by a unique public identifier and call `ValidatePassword` directly. The stored password remains a PocketBase-managed hash; United never needs the plaintext or to duplicate PocketBase's hashing parameters.
 
-Source: current PocketBase implementation [`apis/record_auth_with_password.go`](https://github.com/pocketbase/pocketbase/blob/master/apis/record_auth_with_password.go), especially `recordAuthWithPassword`, `dummyPasswordCheck`, and `Record.ValidatePassword` usage. The same behavior is reflected in the [record operations documentation](https://pocketbase.io/docs/go-records/).
+PocketBase v0.40.3 and the upstream maintainer's answer confirm that a Base collection may define a native `PasswordField` in a migration. The field setter hashes plaintext with bcrypt, its database driver persists the hash, and `Record.ValidatePassword` validates records whose field is named `password`. PocketBase's own password-field tests exercise the field against `NewBaseCollection` records. Because the collection remains Base rather than Auth, it has no collection authentication or token-issuance path.
+
+United must explicitly configure the field as `Hidden: true`; the Password field type being absent from the Dashboard's Base-collection field picker is not the same as record-response hiding. United must set plaintext with `Record.SetPassword` or `Record.Set`, never `SetRaw`, and must not expose the `password:hash` getter. Successful persistence clears the in-memory plaintext value, while the hidden setting prevents serialization before that point.
+
+Sources: PocketBase v0.40.3 [`core/field_password.go`](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/field_password.go), [`core/record_model_auth.go`](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/record_model_auth.go), [`core/record_model.go`](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/record_model.go), [`core/field_password_test.go`](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/field_password_test.go), and the maintainer answer in [Is there a way to use bcrypt password fields in base collections?](https://github.com/pocketbase/pocketbase/discussions/6889).
 
 Security requirements for United's verifier:
 
@@ -243,32 +247,32 @@ If the state remains in S3, PocketBase should hold the authoritative group/crede
 
 **Rejected as the default.** It allows reuse of `authWithPassword`, but it creates a pseudo-user for a group credential, invites token issuance, complicates human/user semantics, and risks treating a shared secret as a session identity. It can be made safe only with a dedicated Auth collection plus a custom endpoint that stops before token issuance, but then the Auth collection is mostly being used as a password-hash container.
 
-### B. Shared credential as a Base record with a password-like field
+### B. Shared credential as a Base record with a native PasswordField
 
-**Recommended if PocketBase's schema/API permits the required password hashing for that record type.** The direct `Record.ValidatePassword` primitive is available on records, but implementation should verify at the selected PocketBase version that a Base record receives the same password field validation/hash behavior as an Auth record. If it does not, use option C rather than duplicating hashing.
+**Selected.** A checked-in Go migration adds a required, hidden, system `PasswordField` named `password` to the Base credential collection. United manages it through record code, validates it with `Record.ValidatePassword`, and never invokes a PocketBase authentication handler. This uses PocketBase's native bcrypt implementation without creating a token-issuing authentication surface.
 
 ### C. Dedicated non-interactive Auth collection
 
-**Safe fallback and likely implementation choice if Base records cannot use native password hashing.** Create an Auth collection such as `terraform_credentials`, disable all interactive methods and public CRUD rules, and store one record per group. Validate with `FindFirstRecordByData`/unique identity plus `ValidatePassword`, but call the method directly and never call the normal auth response path. This preserves native PocketBase hashing while keeping the records out of the human `users` collection.
+**Rejected as unnecessary.** Disabling its authentication rule can prevent public login, but the collection would still carry Auth-only fields, configuration, and authentication routes solely to reuse password storage that PocketBase already supports on Base records.
 
-The remaining implementation question is whether PocketBase allows the desired password field and `ValidatePassword` behavior on Base records; current docs clearly document the primitive on `Record`, while Auth collections are the documented home for password-auth system fields. Verify this with a focused prototype/test before committing to B.
+Implementation tests must prove hash-only persistence, correct validation after reload, hidden serialization before and after persistence, absence of a Base-collection token path, and immediate old/new behavior during rotation. These are acceptance tests for the selected design, not an exploratory prototype.
 
 ## Decision questions newly surfaced
 
-1. **Credential record type:** Can the selected PocketBase version safely hash and validate passwords on a Base record, or should United use a dedicated non-interactive Auth collection? This is the highest-priority prototype.
-2. **Credential identity:** What non-secret username/identity should Terraform send, and is it stable through group renames? Prefer an immutable credential id/name rather than a human email or group display name.
-3. **One credential invariant:** Does “one shared credential per group” mean exactly one active record, or may old/new records overlap during rotation? The recommendation is exactly one active record and atomic replacement.
-4. **Role matrix:** Which human roles may read state, write state, lock/unlock, delete state, manage memberships, and rotate the group credential?
-5. **Membership cardinality:** May a human belong to multiple groups, and can a membership have only one role or multiple roles? This determines whether `group_memberships` is mandatory versus a simpler user multi-relation.
-6. **Credential administration:** Can a group admin rotate only their own group credential, or only a global/superuser operator? Define the API rule and handler transaction boundary.
-7. **State metadata authority:** Will PocketBase own state metadata only while S3 remains the blob store, or will state blobs move into PocketBase? The authorization model works for either, but consistency and backup requirements differ.
-8. **Failure and rate limits:** What rate limit, audit event, and alerting policy applies to failed Terraform Basic Auth attempts and credential rotation?
-9. **Secret distribution:** Where are group credentials generated and delivered, and how is the first credential issued without exposing it to PocketBase record responses or logs?
-10. **Single-writer deployment:** Is the one-server/one-writer constraint permanent, or must the design leave room for a later multi-instance deployment? If later, all credential/state writes need a migration path to serialized transactions or an external coordinator.
+1. **Credential identity:** What non-secret username/identity should Terraform send, and is it stable through group renames? Prefer an immutable credential id/name rather than a human email or group display name.
+1. **One credential invariant:** Does “one shared credential per group” mean exactly one active record, or may old/new records overlap during rotation? The recommendation is exactly one active record and atomic replacement.
+1. **Role matrix:** Which human roles may read state, write state, lock/unlock, delete state, manage memberships, and rotate the group credential?
+1. **Membership cardinality:** May a human belong to multiple groups, and can a membership have only one role or multiple roles? This determines whether `group_memberships` is mandatory versus a simpler user multi-relation.
+1. **Credential administration:** Can a group admin rotate only their own group credential, or only a global/superuser operator? Define the API rule and handler transaction boundary.
+1. **State metadata authority:** Will PocketBase own state metadata only while S3 remains the blob store, or will state blobs move into PocketBase? The authorization model works for either, but consistency and backup requirements differ.
+1. **Failure and rate limits:** What rate limit, audit event, and alerting policy applies to failed Terraform Basic Auth attempts and credential rotation?
+1. **Secret distribution:** Where are group credentials generated and delivered, and how is the first credential issued without exposing it to PocketBase record responses or logs?
+1. **Single-writer deployment:** Is the one-server/one-writer constraint permanent, or must the design leave room for a later multi-instance deployment? If later, all credential/state writes need a migration path to serialized transactions or an external coordinator.
 
 ## Implementation checklist
 
-- [ ] Prototype the selected PocketBase version for Base versus dedicated Auth credential records.
+- [ ] Create the Base credential collection with a required, hidden, system `PasswordField` named `password`.
+- [ ] Test hash-only persistence, post-reload validation, hidden serialization, and absence of token issuance.
 - [ ] Create collections and migrations from `main`; do not copy the `nrh/plan-two` implementation.
 - [ ] Add unique indexes for credential identity and any password-auth identity field.
 - [ ] Lock credential list/view and secret-bearing fields from ordinary users.
@@ -288,4 +292,7 @@ The remaining implementation question is whether PocketBase allows the desired p
 - [PocketBase Go routing](https://pocketbase.io/docs/go-routing/)
 - [PocketBase Go event hooks](https://pocketbase.io/docs/go-event-hooks/)
 - [PocketBase current password-auth implementation](https://github.com/pocketbase/pocketbase/blob/master/apis/record_auth_with_password.go)
+- [PocketBase v0.40.3 PasswordField implementation](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/field_password.go)
+- [PocketBase v0.40.3 password-field tests](https://github.com/pocketbase/pocketbase/blob/v0.40.3/core/field_password_test.go)
+- [PocketBase maintainer answer on Base-collection PasswordFields](https://github.com/pocketbase/pocketbase/discussions/6889)
 - [PocketBase source repository](https://github.com/pocketbase/pocketbase)

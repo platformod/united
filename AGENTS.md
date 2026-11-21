@@ -6,6 +6,8 @@ United is a multitenant Terraform HTTP backend designed to run alongside Atlanti
 
 Treat state paths, authentication, encryption, and locking as security- and data-sensitive behavior. Preserve Terraform's HTTP backend contract when changing the state endpoints.
 
+The repository is replatforming to an embedded PocketBase server. Before structural work, read [`docs/plans/pocketbase-replatform.md`](docs/plans/pocketbase-replatform.md) and the architecture decisions in [`docs/adr/`](docs/adr/).
+
 ## Repository map
 
 - `main.go` — loads environment configuration, builds the Gin server, registers middleware and routes.
@@ -17,6 +19,7 @@ Treat state paths, authentication, encryption, and locking as security- and data
 - `docker-compose.yml` — local Redis, LocalStack, and nginx dependencies.
 - `Makefile` — development, build, dependency, and test entry points.
 - `.github/workflows/` — pull-request automation for linting, pre-commit checks, and Terraform tests.
+- `docs/` — internal-facing documentation: `docs/plans/` (implementation plans), `docs/adr/` (architecture decisions), `docs/research/` (research findings), `docs/agents/` (agent conventions), and `docs/releases/` (per-release acceptance records). These are working documents, not user-facing docs; product documentation will live under `site/`.
 - `dist/` and `tmp/` — generated/local workspace content; do not treat them as source.
 
 ## Development workflow
@@ -28,7 +31,7 @@ Run commands from the repository root.
 mise install && mise use
 
 # Build the binary
-misew run build
+mise run build
 
 # Start Docker dependencies, configure LocalStack, and run with Air
 make run
@@ -72,11 +75,16 @@ When changing configuration or request handling:
 
 ## Working agreements
 
+- Write small, focused, idiomatic Go. Prefer standard-library constructs and PocketBase's existing helpers over new abstractions, and keep each package and file to one clear responsibility.
+- When in doubt, apply the principle of least astonishment: match Terraform's documented HTTP backend behavior, PocketBase's conventions, and the vocabulary in `CONTEXT.md` so a reader or operator is not surprised.
+- Keep It Simple.  Don't overthink or solve for hypothetical problems.
 - Read `CONTEXT.md` and relevant ADRs before making domain or architectural changes; these files may be created lazily and are allowed to be absent.
 - Prefer small, focused changes that follow the existing Go and Makefile patterns.
+- If a change alters the repository structure — a new top-level directory, package layout, binary, or generated artifact — update this file in the same change.
 - Preserve the MPL-2.0 license headers in source files.
 - Do not commit generated binaries, local Terraform state, credentials, or dependency caches.
 - Use GitHub Issues as the source of work items and interact with them through `gh`; see [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md).
+- Run research loops in subagents and bring back only the findings, keeping the main session's context focused on decisions and edits.
 - When validation depends on Docker, AWS, Terraform, or external services, report what was and was not run rather than treating a partial check as complete.
 
 ## Agent skills

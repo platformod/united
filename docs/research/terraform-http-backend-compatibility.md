@@ -144,3 +144,62 @@ Users will switch backend configuration and initialize a new PocketBase-backed s
 ## Recommendation
 
 Implement a narrow HTTP compatibility adapter around a raw state record and a lock record, with one serialized write path. Start with the documented Terraform contract (`GET`, `POST`, `DELETE`, `LOCK`, `UNLOCK`, Basic Auth over HTTPS), return exact accepted statuses, preserve JSON lock payloads, validate `ID` on lock-protected state mutation, and add OpenTofu custom-header support only if the chosen authentication model requires it. Keep all S3/KMS/Redis migration concerns out of this implementation.
+
+## Addendum: client version deltas (November 2026)
+
+Research for [platformod/united#418](https://github.com/platformod/united/issues/418). Versions examined: Terraform `v1.17.2` (2026-11-11), `v1.16.7`, `v1.15.9`, `v1.14.9`; OpenTofu `v1.13.9` (2026-11-05), `v1.12.12`, `v1.10.0`, `v1.9.0`, `v1.7.0`, `v1.6.0`.
+
+### The wire contract is unchanged
+
+Diffing the HTTP client across Terraform `v1.0.0` through `v1.17.2` and OpenTofu `v1.6.0` through `v1.13.9` shows no change to request methods, status codes, headers, query parameters, or body handling. The later changes are internal (contexts, interfaces, diagnostics, logging, error types) plus the client features below. A server that implements the original contract still works with every examined version.
+
+### Differences that matter to United
+
+| Behavior | Terraform | OpenTofu | United impact |
+| --- | --- | --- | --- |
+| Custom request headers | None | `headers` since `v1.7.0` ([PR #1487](https://github.com/opentofu/opentofu/pull/1487)) | Basic Auth remains the portable baseline; do not require a custom header for authentication. OpenTofu rejects `Content-Type`/`Content-MD5` overrides and refuses `Authorization` together with username/password. |
+| mTLS client credentials | Since `v1.4.0` ([PR #31699](https://github.com/hashicorp/terraform/pull/31699)) | Inherited from the fork | Optional deployment choice; not required by either client. |
+| Lock-conflict diagnostics | `v1.15.0`+ returns the holder's lock info; older versions return the requester's info ([commit `5e4cfd42`](https://github.com/hashicorp/terraform/commit/5e4cfd42)) | `v1.9.0`+ returns the holder's info (same shape) | Server response is unchanged: `409`/`423` plus the stored lock JSON. Older Terraform displays less useful metadata but still works. |
+| Force-unlock payload | Broken through `v1.17.2`: `Unlock(id)` ignores `id` and sends the cached lock JSON, which is empty on a fresh force-unlock process | Since `v1.10.0`, synthesizes a lock payload containing the supplied `ID` ([PR #2381](https://github.com/opentofu/opentofu/pull/2381)) | Terraform force-unlock cannot convey the lock ID. A strict server must reject it; OpenTofu >= 1.10 can force-unlock normally. |
+
+Terraform's force-unlock bug is upstream issue [#28421](https://github.com/hashicorp/terraform/issues/28421) (open since 2021) with PR [#34517](https://github.com/hashicorp/terraform/pull/34517) still open. The current client source confirms `id` is unused: <https://github.com/hashicorp/terraform/blob/v1.17.2/internal/backend/remote-state/http/client.go>.
+
+An empirical capture against Terraform `v1.17.0` (`terraform force-unlock -force <id>`) showed:
+
+```text
+UNLOCK /state/g/n
+Content-Type: application/json
+Content-MD5: 1B2M2Y8AsgTpgAmY7PhCfg==   # base64(MD5(""))
+Transfer-Encoding: chunked
+body: <empty>
+```
+
+A normal `terraform plan` captured the standard LOCK payload:
+
+```json
+{"ID":"<uuid>","Operation":"OperationTypePlan","Info":"","Who":"user@host","Version":"1.17.0","Created":"...","Path":""}
+```
+
+`Info` and `Path` are empty in ordinary client traffic. A strict LOCK validator must require only the fields the clients actually populate (`ID`, `Operation`, `Version`, `Created`); requiring `Info`, `Path`, or even `Who` would reject legitimate clients.
+
+OpenTofu's synthesized force-unlock payload is a normal `LockInfo` marshal with only `ID` set: `Operation`, `Info`, `Who`, `Version`, and `Path` are empty and `Created` is the zero time (`0001-01-01T00:00:00Z`). `UNLOCK` must therefore treat `ID` as the only meaningful field, exactly as the lock decision specifies.
+
+### Status choices that constrain the server
+
+- `LOCK` treats `409` and `423` specially: it reads the body and unmarshals it as `statemgr.LockInfo`. Invalid JSON produces an unmarshal error; a valid JSON object without an `ID` yields an empty lock ID. On Terraform before `v1.15.0` and on OpenTofu, the unmarshal error carries the requester's lock info with a non-empty ID, so `LockWithContext` retries until the command's lock timeout. Terraform `v1.15.0`+ returns no `Info` on parse failure and fails immediately.
+- Therefore a lifecycle refusal on `LOCK` (tombstoned or purged state) must not reuse `409`/`423` unless it returns a valid stored lock payload. The current lock decision's `409` for tombstoned/purged states is a compatibility hazard; `410 Gone` (or `404`) reaches the clients' generic "Unexpected HTTP response code" path and fails immediately and clearly.
+- `POST`/`PUT`, `DELETE`, and `UNLOCK` treat any non-success generically. `401` versus `403` changes diagnostics only for `GET` and `LOCK`. The credential decision's generic `401` for authentication failure and `403` for suspended/pending groups is client-compatible.
+- `GET` must never return `404` for an authentication failure: both clients treat `404` as "no state" and may proceed to create new state. Authenticate before state lookup.
+- State update accepts `200`, `201`, or `204`; `DELETE`, `LOCK`, and `UNLOCK` accept only `200`.
+- Both clients send `Content-MD5` for non-empty bodies (Terraform also sends it for its empty force-unlock body) and parse it on `GET`; a malformed response header fails the read, and an absent header is replaced with a locally computed digest. Validate it when present on writes, and either return the correct base64 MD5 on reads or omit the header.
+- Both clients expose `update_method`, `lock_method`, and `unlock_method`. At a single state URL, a custom lock/unlock method collides with the update method, so the supported surface should be `POST` (optionally `PUT`) for updates and the default `LOCK`/`UNLOCK` for locking. Do not infer operation type from an ambiguous body.
+- Both clients retry `5xx` responses by default (`retry_max = 2`). Idempotent same-ID `LOCK` and absent-lease `UNLOCK` therefore matter; a retry after a committed write can otherwise create a duplicate version.
+
+### Implication for the support target
+
+There is no need for version-specific server branches. The useful policy is:
+
+- Implement one wire contract and certify it against the current maintained release lines: Terraform `1.16.x`/`1.17.x` (with `1.15.x` optional) and OpenTofu `1.12.x`/`1.13.x`. The repository already pins Terraform `1.17.2` in `mise.toml`; the test harness would need an OpenTofu runner alongside it.
+- Add OpenTofu `1.10.0` as the force-unlock feature floor, or document that force-unlock requires OpenTofu `>= 1.10`.
+- Document Terraform force-unlock as unsupported until upstream [#28421](https://github.com/hashicorp/terraform/issues/28421) is fixed; normal Terraform operations are unaffected.
+- Do not require OpenTofu custom headers or mTLS. Basic Auth + `POST`/`LOCK`/`UNLOCK` is the portable baseline for both clients.
