@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the Gin/S3/Redis Terraform backend with one embedded PocketBase process that preserves the Terraform HTTP backend contract while owning group authentication, encrypted versioned state, lock leases, audit, cleanup, and telemetry.
+**Goal:** Replace the Gin/S3/Redis Terraform backend with one embedded PocketBase process. The process must preserve the Terraform HTTP backend contract and own group authentication, encrypted versioned state, lock leases, audit, cleanup, and telemetry.
 
-**Architecture:** One Go module. `cmd/united` boots PocketBase through `app.Execute()`; a single `wire.Register` attaches routes, hooks, and crons. Pure domain packages (`config`, `apperr`, `telemetry`, `crypto`, `state`) never import PocketBase. Adapters (`store`, `hooks`, `jobs`, `offline`, `migrations`, `wire`) do. Terraform routes live at `/state/{group}/{name}`; the owner download route lives at `/download/{group}/{name}/{version}`; `/api` remains PocketBase-only.
+**Architecture:** One Go module. `cmd/united` boots PocketBase through `app.Execute()`. A single `wire.Register` attaches routes, hooks, and crons. Pure domain packages (`config`, `apperr`, `telemetry`, `crypto`, `state`) never import PocketBase. Adapters (`store`, `hooks`, `jobs`, `offline`, `migrations`, `wire`) do. Terraform routes live at `/state/{group}/{name}`. The owner download route lives at `/download/{group}/{name}/{version}`. `/api` remains PocketBase-only.
 
 **Tech Stack:** Go 1.27.4, PocketBase v0.40.3, `github.com/sethvargo/go-envconfig` v2, OpenTelemetry Go v1.47.0 with `autoexport`, Hugo + Hextra for user docs.
 
-**Spec:** [Plan United's PocketBase-only replatform](https://github.com/platformod/united/issues/405) and its 19 closed decision tickets. The plan is the execution artifact; the tickets remain the authority for every decision.
+**Spec:** [Plan United's PocketBase-only replatform](https://github.com/platformod/united/issues/405) and its 19 closed decision tickets. The plan is the execution artifact. The tickets remain the authority for every decision.
 
 ## Global Constraints
 
@@ -18,18 +18,23 @@
 - `UNITED_MASTER_KEY` is standard base64 decoding to exactly 32 bytes. It comes from the environment only, with no file fallback.
 - `UNITED_LOCK_LEASE_DURATION` uses Go duration syntax, defaults to `35m`, and must be between `5m` and `24h`.
 - State names are one URL segment, normalized to lowercase, and match `^[a-z0-9][a-z0-9._-]{0,254}$`.
-- The Terraform contract accepts `GET`, `POST`, `PUT`, `DELETE`, `LOCK`, and `UNLOCK` at `/state/{group}/{name}`; every other method returns `405` with `Allow`.
-- `401` for every authentication failure, `403` only for a valid route-bound credential whose group is suspended or pending retirement, `409` for lock-ID mismatches and for writes to tombstoned states, `423` with the exact stored lock JSON for live contention, `410` for `LOCK` on tombstoned or purged states and for any write to a purged state.
-- Never emit state documents, credentials, passwords, bcrypt hashes, lock IDs, `Who`, raw lock JSON, master keys, group data keys, wrapped keys, ciphertext, request bodies, SQL parameters, or state digests in logs or errors.
+- The Terraform contract accepts `GET`, `POST`, `PUT`, `DELETE`, `LOCK`, and `UNLOCK` at `/state/{group}/{name}`. Every other method returns `405` with `Allow`.
+- Return these statuses:
+  - `401` for every authentication failure.
+  - `403` only for a valid route-bound credential whose group is suspended or pending retirement.
+  - `409` for a lock-ID mismatch and for a write to a tombstoned state.
+  - `423` with the exact stored lock JSON for live contention.
+  - `410` for `LOCK` on a tombstoned or purged state, and for any write to a purged state.
+- Never log or return a state document, a credential, a password, a bcrypt hash, or a lock ID. Never log or return `Who`, raw lock JSON, or a master key. Never log or return a group data key, a wrapped key, ciphertext, a request body, a SQL parameter, or a state digest.
 - All source files carry the MPL-2.0 header.
 - One active process and one writer. No clustering, leader election, dual-run, dual-write, or compatibility shim.
 - Every slice merges green: `go build ./...`, `go test ./...`, `golangci-lint run ./...`, and `mise run check:ci`.
 - A `depguard` rule denies `github.com/pocketbase/pocketbase` from `internal/config`, `internal/apperr`, `internal/telemetry`, `internal/crypto`, and `internal/state`, with one exception: `internal/crypto` may import `github.com/pocketbase/pocketbase/tools/security` (ADR 0002).
-- A successful state write extends its live lease to `max(current expiry, now + effective duration)`; it never shortens a lease and never revives an expired one. Reads, `LOCK` replays, and `UNLOCK` never extend (ADR 0002).
-- `HEAD` and `OPTIONS` on state routes return `405` with `Allow`; the CORS middleware is unbound on the state route group.
+- A successful state write extends its live lease to `max(current expiry, now + effective duration)`. It never shortens a lease and never revives an expired one. Reads, `LOCK` replays, and `UNLOCK` never extend (ADR 0002).
+- `HEAD` and `OPTIONS` on state routes return `405` with `Allow`. The CORS middleware is unbound on the state route group.
 - Custom state routes bind `apis.BodyLimit` to the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB of overhead. PocketBase's 32 MiB default body limit is not the state limit.
-- Superusers are trusted. No collection rule, hook, or hidden field is a containment boundary against a superuser; validators exist for data correctness and accident prevention only (ADR 0002).
-- Deactivating a user sets `disabled=true`, rotates the user's token key so every existing session fails immediately, preserves memberships and pending invitations, and is rejected when it would remove a final active owner (ADR 0003).
+- Superusers are trusted. No collection rule, hook, or hidden field is a containment boundary against a superuser. Validators exist for data correctness and accident prevention only (ADR 0002).
+- Deactivating a user sets `disabled=true` and rotates the user's token key. Every existing session then fails immediately. Deactivation keeps memberships and pending invitations. The operation is rejected when it would remove a final active owner (ADR 0003).
 
 ### PocketBase extension discipline
 
@@ -43,30 +48,30 @@
 - Serve mode passes `--encryptionEnv=UNITED_PB_ENCRYPTION`. The key is exactly 32 characters, is required in production, and is escrowed separately from `UNITED_MASTER_KEY`.
 - Rate limiting is edge-owned. The deployment proxy limits `/state/*` credential attempts and `/api/collections/users/auth-*`, and PocketBase's built-in limiter stays enabled for `/api`. PocketBase's limiter does not cover custom routes.
 - Production sets the PocketBase superuser IP/CIDR allowlist and records the `united superuser ips` recovery command.
-- Realtime stays enabled on `/api`. Collection rules lock every domain collection, `OnRecordEnrich` shapes the payload for every principal, and state bytes are served only by the custom `/state` routes, so realtime never exposes state documents or credential secrets. This is a deliberate decision, not an oversight.
+- Realtime stays enabled on `/api`. Collection rules lock every domain collection. `OnRecordEnrich` shapes the payload for every principal. State bytes are served only by the custom `/state` routes. Realtime therefore never exposes state documents or credential secrets. This is a deliberate decision, not an oversight.
 
 ## Review Focus
 
 1. **State-name and path handling.** Uppercase, dots, underscores, hyphens, leading digits, empty, 256 characters, Unicode, whitespace, `..`, `/`, and `\` must normalize or reject consistently and must never escape the `state_versions` storage prefix.
 2. **Lock payload edge cases.** Empty `Info`, `Path`, and `Who`, missing `Version`, invalid `Created`, arbitrary `Operation`, duplicate JSON keys, a 1 MiB body, wrong `Content-Type`, and an empty `UNLOCK` body must produce the documented status rather than a `500`.
 3. **Lease expiry and credential rotation races.** A same-ID `LOCK` replay, a stale `?ID=` write, a reader during publication, and a request authenticated before rotation must all resolve linearly with no half-published version.
-4. **Missing, truncated, or tampered files.** A committed version whose file is absent, undecryptable, or digest-mismatched must fail closed with no state bytes, no fallback to older history, and no metadata mutation.
+4. **Missing, truncated, or tampered files.** A committed version whose file is absent, undecryptable, or digest-mismatched must fail closed. It must return no state bytes, fall back to no older history, and change no metadata.
 5. **Offline command misuse.** A wrong master key, wrong generation, missing sentinel, or a server still running must make `rekey`, `verify`, and forced cleanup refuse safely with no partial database change.
-6. **PocketBase extension discipline.** Every hook calls `e.Next()` or documents the replacement; every filter binds parameters; every filesystem handle closes; crons register before serve; HTTP tests use `ApiScenario` with `ExpectedEvents`; `UNITED_PB_ENCRYPTION` is required in serve mode.
+6. **PocketBase extension discipline.** Every hook calls `e.Next()` or documents the replacement. Every filter binds parameters. Every filesystem handle closes. Crons register before serve. HTTP tests use `ApiScenario` with `ExpectedEvents`. `UNITED_PB_ENCRYPTION` is required in serve mode.
 
 ---
 
 ## Deliberate Deviations from PocketBase Defaults
 
-These choices look unusual against the PocketBase docs and the community best-practice rules. They are intentional; do not "fix" them without revisiting the linked decision.
+These choices look unusual against the PocketBase docs and the community best-practice rules. They are intentional. Do not "fix" them without revisiting the linked decision.
 
-- **`app.Execute()` with hooks registered in the serve command's `PreRunE`.** Configuration and telemetry must load after command dispatch so an offline command never starts OTel, and `app.Execute()` does not register `serve` or `superuser` (Task 1.9). Hooks still bind through `OnServe`, and tests call `wire.Register` directly.
-- **`migratecmd.Config{Automigrate: false}`.** Schema changes are hand-written and reviewed; the dashboard never generates production migrations. Development uses `migrate create` and `migrate collections` (Task 1.9).
-- **Encryption and file write inside the publication transaction.** PocketBase writes a `FileField` during `Save`, inside the transaction. The file is therefore written before commit, and a rolled-back publication can leave an orphan. Orphan reconciliation is the cleanup path (Task 4.3); `TestPublishRollbackLeavesReconcilableOrphan` proves it.
+- **`app.Execute()` with hooks registered in the serve command's `PreRunE`.** Configuration and telemetry must load after command dispatch so an offline command never starts OTel. `app.Execute()` does not register `serve` or `superuser` (Task 1.9). Hooks still bind through `OnServe`, and tests call `wire.Register` directly.
+- **`migratecmd.Config{Automigrate: false}`.** Schema changes are hand-written and reviewed. The dashboard never generates production migrations. Development uses `migrate create` and `migrate collections` (Task 1.9).
+- **Encryption and file write inside the publication transaction.** PocketBase writes a `FileField` during `Save`, inside the transaction. The file is therefore written before commit, and a rolled-back publication can leave an orphan. Orphan reconciliation is the cleanup path (Task 4.3). `TestPublishRollbackLeavesReconcilableOrphan` proves it.
 - **Superusers are trusted.** No rule, hidden field, or hook is a containment boundary against a superuser (ADR 0002). Validators exist for correctness and accident prevention only.
 - **`internal/crypto` imports `github.com/pocketbase/pocketbase/tools/security`.** This is the single sanctioned cipher and the only PocketBase import allowed outside the adapters (ADR 0002).
 - **A successful state write extends its live lease.** Terraform and OpenTofu send no heartbeat, so a fixed lease would lose mutual exclusion mid-apply (ADR 0002).
-- **`UNITED_PB_ENCRYPTION` is a third operator secret.** It protects `_params` (the SMTP password and each auth collection's signing key) and is independent of `UNITED_MASTER_KEY`. Losing it makes settings unreadable; back it up separately.
+- **`UNITED_PB_ENCRYPTION` is a third operator secret.** It protects `_params` (the SMTP password and each auth collection's signing key) and is independent of `UNITED_MASTER_KEY`. Losing it makes settings unreadable. Back it up separately.
 - **Rate limiting is edge-owned.** This is an internal tool, and the state route is a custom route that PocketBase's limiter does not cover. The edge proxy is the control point (Global Constraints).
 
 ---
@@ -314,13 +319,13 @@ type LockStore interface {
 }
 ```
 
-`httpapi` and `store` both accept `state.Clock`; neither defines its own clock type.
+`httpapi` and `store` both accept `state.Clock`. Neither defines its own clock type.
 
 ---
 
 ## Slice 1: Foundation
 
-Slice gate: the app boots with `/api` only, migrations apply from empty, the key gate refuses mismatches, crypto and lease tests pass, telemetry is a true no-op when disabled, and the Hugo site builds.
+Slice gate: the app boots with `/api` only. Migrations apply from empty. The key gate refuses mismatches. Crypto and lease tests pass. Telemetry is a true no-op when disabled. The Hugo site builds.
 
 ### Task 1.1: Configuration package
 
@@ -337,11 +342,11 @@ Test names: `TestLoadDefaults`, `TestServeRequiresMasterKey`, `TestServeRequires
 
 Assertions:
 - With `UNITED_MASTER_KEY` set to base64 of 32 bytes and `UNITED_PB_ENCRYPTION` set to 32 characters, `Load(ctx, ModeServe)` returns `MaxStateSize == 15_000_000`, `LockLeaseDuration == 35*time.Minute`, `TelemetryEnabled == false`, `LogLevel == slog.LevelInfo`, `DataDir == "./pb_data"`, `ListenAddr == "0.0.0.0:8090"`, `MasterKeyGeneration == 1`.
-- `ModeServe` with a missing or non-32-character `UNITED_PB_ENCRYPTION` returns an error naming the variable; `ModeCommand` allows it to be absent.
-- `ModeServe` with a missing, non-base64, 31-byte, or 33-byte key returns an error naming `UNITED_MASTER_KEY`; `ModeCommand` with the key unset returns a config with a nil `MasterKey` and the same other values.
+- `ModeServe` with a missing or non-32-character `UNITED_PB_ENCRYPTION` returns an error naming the variable. `ModeCommand` allows it to be absent.
+- `ModeServe` with a missing, non-base64, 31-byte, or 33-byte key returns an error naming `UNITED_MASTER_KEY`. `ModeCommand` with the key unset returns a config with a nil `MasterKey` and the same other values.
 - `UNITED_MASTER_KEY_GENERATION` of `0` or `-1` fails.
-- `UNITED_MAX_STATE_SIZE` of `0`, `-1`, or `536870913` fails; `536870912` passes.
-- `UNITED_LOCK_LEASE_DURATION` of `4m59s`, `24h1s`, or `banana` fails; `5m`, `24h`, and unset pass.
+- `UNITED_MAX_STATE_SIZE` of `0`, `-1`, or `536870913` fails. `536870912` passes.
+- `UNITED_LOCK_LEASE_DURATION` of `4m59s`, `24h1s`, or `banana` fails. `5m`, `24h`, and unset pass.
 - `LOG_LEVEL=verbose` fails.
 
 Use `t.Setenv` and `envconfig.Process(context.Background(), &cfg)`. Reset with `t.Setenv` per case.
@@ -355,7 +360,7 @@ Expected: FAIL because `Config` and `Load` do not exist.
 
 Use struct tags such as `env:"UNITED_MASTER_KEY"`, `env:"UNITED_MASTER_KEY_GENERATION,default=1"`, `env:"UNITED_PB_ENCRYPTION"`, `env:"UNITED_MAX_STATE_SIZE,default=15000000"`, `env:"UNITED_LOCK_LEASE_DURATION,default=35m"`, `env:"TELEMETRY_ENABLED,default=false"`, `env:"LOG_LEVEL,default=info"`, `env:"UNITED_DATA_DIR,default=./pb_data"`, `env:"UNITED_LISTEN_ADDR,default=0.0.0.0:8090"`, and `env:"UNITED_ACTOR"`.
 
-Use `envconfig.Base64Bytes` for `MasterKey`; a plain `[]byte` field receives the base64 text unchanged. Reject any decoded length other than 32. In `ModeServe`, require the key to be present and non-empty and require `UNITED_PB_ENCRYPTION` to be exactly 32 characters; in `ModeCommand` (offline commands, which receive their keys through flags) allow both to be absent. Parse `LOG_LEVEL` into `slog.Level`. Reject a generation below 1. Validate the max-size ceiling of `512 << 20` and the lease bounds. Configuration errors are bootstrap errors and use `fmt.Errorf` naming the setting; they do not use the HTTP error classes.
+Use `envconfig.Base64Bytes` for `MasterKey`. A plain `[]byte` field receives the base64 text unchanged. Reject any decoded length other than 32. In `ModeServe`, require the key to be present and non-empty. Also require `UNITED_PB_ENCRYPTION` to be exactly 32 characters. In `ModeCommand`, allow both to be absent because offline commands receive their keys through flags. Parse `LOG_LEVEL` into `slog.Level`. Reject a generation below 1. Verify the max-size ceiling of `512 << 20` and the lease bounds. Configuration errors are bootstrap errors. Use `fmt.Errorf` and name the setting. Do not use the HTTP error classes.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -385,7 +390,7 @@ Test names: `TestHTTPStatus`, `TestClassOf`, `TestSafeMessage`.
 Assertions:
 - `validation` → 400, `not_found` → 404, `conflict` → 409, `gone` → 410, `unauthorized` → 401, `forbidden` → 403, `storage` → 503, `database` → 503, `crypto` → 500, `internal` → 500.
 - `ClassOf` unwraps `fmt.Errorf("wrap: %w", apperr.New(...))`.
-- A `Safe` error exposes `Msg`; an unsafe error exposes only the class label, never `Err.Error()`.
+- A `Safe` error exposes `Msg`. An unsafe error exposes only the class label and never `Err.Error()`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -441,7 +446,7 @@ Test names: `TestRegistryRejectsDuplicate`, `TestRegistryRejectsMalformedName`, 
 Assertions:
 - Duplicate event or metric names fail `Validate`.
 - Names must match `^united\.[a-z0-9]+(\.[a-z0-9_]+)+$` or the approved `http.server.*` and `pb.*` names.
-- Histograms and gauges require a unit; counters use unit `1`.
+- Histograms and gauges require a unit. Counters use unit `1`.
 - Every outcome used by a constructor must be declared in its `EventSpec`.
 - `state.document`, `state.name`, `group.id`, `credential.id`, `lock.id`, `lock.payload`, and `state.bytes` are rejected as metric attributes.
 - `Events` and `Metrics` return sorted copies.
@@ -453,7 +458,7 @@ Expected: FAIL because the registry does not exist.
 
 - [ ] **Step 3: Implement `internal/telemetry/registry.go`**
 
-Seed the registry with the event and metric catalogs from #561. Keep the registry in one file; adding a signal is one entry. Use `sync.RWMutex` so tests can reset it. Export `ResetForTest()` guarded by a build tag or a `testing` helper; prefer an unexported `reset` and a test in the same package.
+Seed the registry with the event and metric catalogs from #561. Keep the registry in one file, so adding a signal is one entry. Use `sync.RWMutex` so tests can reset it. Export `ResetForTest()` guarded by a build tag or a `testing` helper. Prefer an unexported `reset` and a test in the same package.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -482,7 +487,7 @@ Test names: `TestLoggerWritesJSONToStdout`, `TestLoggerUsesMultiHandlerWhenEnabl
 
 Assertions:
 - Disabled telemetry writes one JSON object per line with `time`, `level`, `msg`, `otel.event.name`, and `united.outcome`.
-- Enabled telemetry uses `slog.MultiHandler` with the stdout handler and the supplied OTel handler; a recording handler sees the same record.
+- Enabled telemetry uses `slog.MultiHandler` with the stdout handler and the supplied OTel handler. A recording handler sees the same record.
 - `authorization`, `password`, `password:hash`, `lock.id`, `lock.payload`, `who`, `state.document`, `state.bytes`, `master_key`, `wrapped_key`, and `ciphertext` are stripped.
 - `united.group.id`, `united.state.name`, `united.request.id`, `united.outcome`, and `error.type` pass through.
 - The redaction handler is idempotent and preserves attribute order for allowed keys.
@@ -534,9 +539,9 @@ Test names: `TestSetupDisabledIsNoOp`, `TestSetupRequiresEndpointWhenEnabled`, `
 Assertions:
 - Disabled returns a non-nil `Shutdown`, a nil handler, and leaves the global tracer, meter, and logger providers as the no-op providers, without calling `autoexport`.
 - Enabled returns a non-nil `slog.Handler` that writes to the OTel log pipeline.
-- Enabled with any signal exported over OTLP and no `OTEL_EXPORTER_OTLP_ENDPOINT` or per-signal endpoint returns an error naming the variable. An unset `OTEL_*_EXPORTER` defaults to `otlp`, so the check covers unset as well as explicit `otlp` values, and it runs before `autoexport` is called.
+- Enabled with any signal exported over OTLP and no `OTEL_EXPORTER_OTLP_ENDPOINT` or per-signal endpoint returns an error naming the variable. An unset `OTEL_*_EXPORTER` defaults to `otlp`, so verification covers both unset and explicit `otlp` values. The verification runs before `autoexport` is called.
 - `OTEL_METRICS_EXPORTER=prometheus` returns an error.
-- Enabled with `OTEL_TRACES_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=otlp`, and an endpoint builds providers; `Shutdown` is idempotent.
+- Enabled with `OTEL_TRACES_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=otlp`, and an endpoint builds providers. `Shutdown` is idempotent.
 - A log record carrying `password` never reaches the in-memory exporter.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -575,10 +580,10 @@ Test names: `TestParseMasterKey`, `TestSentinelRoundTrip`, `TestSentinelRejectsW
 
 Assertions:
 - `ParseMasterKey` accepts base64 of 32 bytes and rejects 31/33 bytes and non-base64.
-- `NewSentinel` returns non-empty ciphertext; `CheckSentinel` passes with the same key and fails with a different valid key.
-- `NewGroupKey` returns 32 random characters; two calls differ.
+- `NewSentinel` returns non-empty ciphertext. `CheckSentinel` passes with the same key and fails with a different valid key.
+- `NewGroupKey` returns 32 random characters. Two calls differ.
 - `WrapGroupKey`/`UnwrapGroupKey` round-trip and reject a different master key.
-- `EncryptState` returns standard base64 text that decodes; `DecryptState` returns the exact plaintext bytes.
+- `EncryptState` returns standard base64 text that decodes. `DecryptState` returns the exact plaintext bytes.
 - A one-byte change anywhere in the ciphertext makes `DecryptState` fail.
 - `EncryptState` output never contains the plaintext.
 - `EncryptState` and `DecryptState` reject keys whose decoded length is not exactly 32 bytes.
@@ -593,7 +598,7 @@ Expected: FAIL because the package does not exist.
 
 Use `github.com/pocketbase/pocketbase/tools/security` for `Encrypt`, `Decrypt`, and `RandomString`. This is the only PocketBase import allowed in this package (ADR 0002). `ParseMasterKey` uses `base64.StdEncoding.DecodeString`. `NewGroupKey` uses `security.RandomString(32)`. Do not define a competing cipher or associated-data scheme.
 
-`security.Encrypt` accepts 16-, 24-, or 32-byte keys and silently selects AES-128/192/256, so both wrappers reject any key whose decoded length is not 32. `security.Decrypt` slices the first 12 bytes without a length check and panics on short input, so `DecryptState` and `UnwrapGroupKey` length-check the decoded ciphertext before calling it and return an `apperr.ClassCrypto` error instead.
+`security.Encrypt` accepts 16-, 24-, or 32-byte keys and silently selects AES-128/192/256. Both wrappers therefore reject any key whose decoded length is not 32. `security.Decrypt` slices the first 12 bytes without verifying the length and panics on short input. `DecryptState` and `UnwrapGroupKey` therefore verify the length of the decoded ciphertext before they call it. On a short input they return an `apperr.ClassCrypto` error instead.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -621,12 +626,12 @@ git commit -m "feat(crypto): add master key, sentinel, group keys, and envelope 
 Test names: `TestNormalizeName`, `TestCanTransition`, `TestRetentionEligible`, `TestLeaseLive`, `TestAcquire`, `TestRelease`.
 
 Assertions:
-- `NormalizeName` lowercases `MyState` to `mystate`; accepts `a`, `a.b_c-d`, 255 characters; rejects empty, 256 characters, leading `.`/`-`/`_`, `..`, `a/b`, `a\b`, whitespace, Unicode, and control characters.
-- `CanTransition` allows `empty→active`, `empty→tombstoned`, `active→tombstoned`, `tombstoned→active`, `tombstoned→empty`, `tombstoned→purged`; rejects `purged→*` and `active→empty`.
+- `NormalizeName` lowercases `MyState` to `mystate`. It accepts `a`, `a.b_c-d`, and 255 characters. It rejects empty, 256 characters, a leading `.`/`-`/`_`, `..`, `a/b`, `a\b`, whitespace, Unicode, and control characters.
+- `CanTransition` allows `empty→active`, `empty→tombstoned`, `active→tombstoned`, `tombstoned→active`, `tombstoned→empty`, and `tombstoned→purged`. It rejects `purged→*` and `active→empty`.
 - `RetentionEligible` is false at exactly `now - days`, true one second later, and false when `nonCurrentAt` is nil.
 - `Lease.Live` is false at exactly `ExpiresAt`, true one nanosecond before.
-- `Acquire` with no lease returns `LockAcquired`; with a live same-ID lease returns `LockIdempotent` and does not change expiry; with a live different-ID lease returns `LockContended`; with an expired lease returns `LockAcquired` with a new expiry.
-- `Release` with a matching live ID returns `LockReleased`; a mismatched live ID returns `LockMismatched`; absent or expired returns `LockNotFound`.
+- `Acquire` with no lease returns `LockAcquired`. A live same-ID lease returns `LockIdempotent` and does not change the expiry. A live different-ID lease returns `LockContended`. An expired lease returns `LockAcquired` with a new expiry.
+- `Release` with a matching live ID returns `LockReleased`. A mismatched live ID returns `LockMismatched`. An absent or expired lease returns `LockNotFound`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -635,7 +640,7 @@ Expected: FAIL because the package does not exist.
 
 - [ ] **Step 3: Implement the pure domain**
 
-Keep the package free of PocketBase, database, HTTP, and clock dependencies; accept `time.Time` and durations as arguments. The name regex is `^[a-z0-9][a-z0-9._-]{0,254}$`.
+Keep the package free of PocketBase, database, HTTP, and clock dependencies. Accept `time.Time` and durations as arguments. The name regex is `^[a-z0-9][a-z0-9._-]{0,254}$`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -667,14 +672,14 @@ Use `tests.NewTestApp(t.TempDir())` from `github.com/pocketbase/pocketbase/tests
 - Collections exist: `groups`, `group_memberships`, `group_invitations`, `terraform_credentials`, `logical_states`, `state_versions`, `audit_events`, `system_settings`, `retired_groups`.
 - `terraform_credentials.password` is a `PasswordField` with `Hidden=true`, `Required=true`, `Min>=32`.
 - `groups.wrapped_key`, `logical_states.lock_payload`, and `system_settings.key_sentinel` are hidden.
-- The intent fields `groups.confirm_destructive` and `terraform_credentials.rotate_credential` are neither hidden nor system fields; `OnRecordEnrich` strips them from responses.
-- `state_versions.file` is a `FileField` with `Protected=true`, `MaxSelect=1`, and `MaxSize >= 700<<20` (the base64-expanded form of the 512 MiB `UNITED_MAX_STATE_SIZE` ceiling plus overhead).
+- The intent fields `groups.confirm_destructive` and `terraform_credentials.rotate_credential` are neither hidden nor system fields. `OnRecordEnrich` strips them from responses.
+- `state_versions.file` is a `FileField` with `Protected=true`, `MaxSelect=1`, and `MaxSize >= 700<<20`. That value is the base64-expanded form of the 512 MiB `UNITED_MAX_STATE_SIZE` ceiling plus overhead.
 - Unique indexes exist on `(group, name)` for `logical_states`, `(user, group)` for `group_memberships`, `(group, user)` for `group_invitations`, `group` for `terraform_credentials`, `username` for `terraform_credentials`, `group_id` and `credential_username` for `retired_groups`.
 - `audit_events` has indexes on `(group_id, created)`, `(event_type, created)`, and `(actor_id, created)`.
-- `state_versions` has an index on `(logical_state, created, id)`; `logical_states` has indexes on `status`, `non_current_at`, `lock_id`, and `lock_expires_at`.
+- `state_versions` has an index on `(logical_state, created, id)`. `logical_states` has indexes on `status`, `non_current_at`, `lock_id`, and `lock_expires_at`.
 - `system_settings` has exactly one record with `master_key_generation=1` and `invitation_ttl_days=7`.
-- The built-in `users` collection has a `disabled` bool defaulting to false, `authRule` is `verified = true && disabled != true`, and `createRule` stays `nil` in this slice.
-- Every domain collection has `nil` create/update/delete rules in this slice; reads are also `nil` until Task 3.1.
+- The built-in `users` collection has a `disabled` bool defaulting to false and `authRule` `verified = true && disabled != true`. `createRule` stays `nil` in this slice.
+- Every domain collection has `nil` create/update/delete rules in this slice. Reads are also `nil` until Task 3.1.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -687,16 +692,16 @@ Create the collections with `core.NewBaseCollection`. Use `core.TextField`, `cor
 
 Field set:
 
-- `groups`: `name` text required max 100; `status` select `active|suspended|pending_retirement`; `retention_days` number min 1 max 365; `lock_lease_duration` text optional; `wrapped_key` text required hidden; `retirement_requested_at` date optional; `confirm_destructive` bool optional (not hidden; write-only via enrichment); autodates.
-- `group_memberships`: `user` relation users required cascade; `group` relation groups required cascade; `role` select `owner|member`; autodates.
-- `group_invitations`: `group` relation groups required cascade; `user` relation users required cascade; `email` email required; `invited_by` text required; `status` select `pending`; `expires_at` date required; autodates.
-- `terraform_credentials`: `group` relation groups required cascade; `username` text required; `password` password system hidden required min 32 max 71 cost 10 (PocketBase rejects a maximum above 71); `enabled` bool; `issued_at` date required; `rotated_at`, `disabled_at`, `enabled_at` dates optional; `rotate_credential` bool optional (not hidden; write-only via enrichment).
-- `logical_states`: `group` relation groups required cascade; `name` text required min 1 max 255; `status` select `empty|active|tombstoned|purged`; `current_version` relation `state_versions` max 1; `tombstoned_at`, `purged_at` dates optional; `lock_payload` text hidden max 1 MiB; `lock_id` text optional; `lock_acquired_at`, `lock_expires_at` dates optional; autodates.
-- `state_versions`: `logical_state` relation logical_states required cascade; `file` file required protected max 1 max size `700<<20`; `plaintext_bytes` number required min 0 max 536870912 only int; `sha256` text required min 64 max 64; `non_current_at` date optional; autodates.
-- `audit_events`: `event_type` text required max 64; `schema_version` number required min 1 only int; `actor_type` select `user|superuser|terraform_credential|system|offline_operator`; `actor_id` text required; `subject_type` text required; `subject_id` text required; `group_id` text optional; `request_id` text optional; `details` json optional max 64 KiB; validators enforce the typed shape, and an event with no typed details stores `{}`; autodates.
-- `system_settings`: `master_key_generation` number required min 1 only int; `key_sentinel` text hidden max 4096; `invitation_ttl_days` number required min 1 max 90; autodates.
-- `retired_groups`: `group_id` text required; `credential_username` text required; `created` date required; `retirement_requested_at` date required; `purged_at` date required.
-- `users` (PocketBase built-in, extended): add `disabled` bool default false; set `authRule` to `verified = true && disabled != true`; keep `createRule` locked until Task 3.9; list and view self only. Registration and the field-level update allowlist belong to the Task 3.9 hook.
+- `groups`: `name` text required max 100. `status` select `active|suspended|pending_retirement`. `retention_days` number min 1 max 365. `lock_lease_duration` text optional. `wrapped_key` text required hidden. `retirement_requested_at` date optional. `confirm_destructive` bool optional, not hidden, write-only via enrichment. Autodates.
+- `group_memberships`: `user` relation users required cascade. `group` relation groups required cascade. `role` select `owner|member`. Autodates.
+- `group_invitations`: `group` relation groups required cascade. `user` relation users required cascade. `email` email required. `invited_by` text required. `status` select `pending`. `expires_at` date required. Autodates.
+- `terraform_credentials`: `group` relation groups required cascade. `username` text required. `password` password system hidden required min 32 max 71 cost 10 (PocketBase rejects a maximum above 71). `enabled` bool. `issued_at` date required. `rotated_at`, `disabled_at`, `enabled_at` dates optional. `rotate_credential` bool optional, not hidden, write-only via enrichment.
+- `logical_states`: `group` relation groups required cascade. `name` text required min 1 max 255. `status` select `empty|active|tombstoned|purged`. `current_version` relation `state_versions` max 1. `tombstoned_at`, `purged_at` dates optional. `lock_payload` text hidden max 1 MiB. `lock_id` text optional. `lock_acquired_at`, `lock_expires_at` dates optional. Autodates.
+- `state_versions`: `logical_state` relation logical_states required cascade. `file` file required protected max 1 max size `700<<20`. `plaintext_bytes` number required min 0 max 536870912 only int. `sha256` text required min 64 max 64. `non_current_at` date optional. Autodates.
+- `audit_events`: `event_type` text required max 64. `schema_version` number required min 1 only int. `actor_type` select `user|superuser|terraform_credential|system|offline_operator`. `actor_id` text required. `subject_type` text required. `subject_id` text required. `group_id` text optional. `request_id` text optional. `details` json optional max 64 KiB. Validators enforce the typed shape, and an event with no typed details stores `{}`. Autodates.
+- `system_settings`: `master_key_generation` number required min 1 only int. `key_sentinel` text hidden max 4096. `invitation_ttl_days` number required min 1 max 90. Autodates.
+- `retired_groups`: `group_id` text required. `credential_username` text required. `created` date required. `retirement_requested_at` date required. `purged_at` date required.
+- `users` (PocketBase built-in, extended): add `disabled` bool default false. Set `authRule` to `verified = true && disabled != true`. Keep `createRule` locked until Task 3.9. List and view are self only. Registration and the field-level update allowlist belong to the Task 3.9 hook.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -714,7 +719,7 @@ git commit -m "feat(migrations): add the full PocketBase domain schema"
 
 **Files:**
 - Create: `cmd/united/main.go`, `internal/wire/wire.go`, `.github/workflows/smoke.yml`, `.github/workflows/test.yml`
-- Modify: `mise.toml`, `.goreleaser.yaml`, `Dockerfile`, `Makefile`, `.air.toml`, `README.md`, `AGENTS.md`, `.gitignore`, `.renovaterc.json`, `.golangci.yml`, `docker-compose.yml`, `tests/Makefile`
+- Change: `mise.toml`, `.goreleaser.yaml`, `Dockerfile`, `Makefile`, `.air.toml`, `README.md`, `AGENTS.md`, `.gitignore`, `.renovaterc.json`, `.golangci.yml`, `docker-compose.yml`, `tests/Makefile`
 - Delete: `main.go`, `config.go`, `handlers.go`, `middlewares.go`, `util.go`, `tests/nginx.conf`, `.github/workflows/terrafrom-test.yml`
 - Test: `internal/wire/wire_test.go`
 
@@ -784,15 +789,15 @@ func main() {
 }
 ```
 
-`app.Execute()` does not register `serve` or `superuser` (that is `app.Start()`), so United adds `cmd.NewServeCommand`, `cmd.NewSuperuserCommand`, and the `migratecmd` plugin itself. PocketBase v0.40.3 has no `backup` CLI command; backups are the superuser HTTP routes and the `backups.cron` setting. Configuration and telemetry are loaded inside the serve command, never before command dispatch, so an offline command cannot start OTel. `HideStartBanner` has no effect under `Execute()` and is not set.
+`app.Execute()` does not register `serve` or `superuser` (that is `app.Start()`), so United adds `cmd.NewServeCommand`, `cmd.NewSuperuserCommand`, and the `migratecmd` plugin itself. PocketBase v0.40.3 has no `backup` CLI command. Backups are the superuser HTTP routes and the `backups.cron` setting. Configuration and telemetry are loaded inside the serve command, never before command dispatch, so an offline command cannot start OTel. `HideStartBanner` has no effect under `Execute()` and is not set.
 
-The `--encryptionEnv` default is `UNITED_PB_ENCRYPTION`, so PocketBase encrypts `_params` at rest. `config.Load` validates the same variable, and the release procedure escrows it separately from `UNITED_MASTER_KEY`. Development uses `united migrate create "name"` and `united migrate collections`; `Automigrate` stays off so the dashboard never writes a migration file.
+The `--encryptionEnv` default is `UNITED_PB_ENCRYPTION`, so PocketBase encrypts `_params` at rest. `config.Load` verifies the same variable, and the release procedure escrows it separately from `UNITED_MASTER_KEY`. Development uses `united migrate create "name"` and `united migrate collections`. `Automigrate` stays off so the dashboard never writes a migration file.
 
-`wire.Register` binds `OnServe` to the key gate, route registration, and cron registration, `OnTerminate` to shutdown with a 5-second flush timeout, and imports `internal/migrations` for its side effect. It does not bind `OnBootstrap`; application migrations have not run at that point (ADR 0002). In slice 1, `OnServe` registers no custom routes.
+`wire.Register` binds `OnServe` to the key gate, route registration, and cron registration. It binds `OnTerminate` to shutdown with a 5-second flush timeout. It imports `internal/migrations` for its side effect. It does not bind `OnBootstrap` because application migrations have not run at that point (ADR 0002). In slice 1, `OnServe` registers no custom routes.
 
-Delete the v1 files and run `go mod tidy`; assert `go.mod` no longer contains Gin, the AWS SDK, the S3 encryption client, or Redis. Add the `depguard` rule to `.golangci.yml`, including the `tools/security` allow entry. Update `mise.toml` build to `go build -o dist/united ./cmd/united`, `.goreleaser.yaml` to `main: ./cmd/united`, `Dockerfile` to keep `COPY united /` (goreleaser stages the binary at the build-context root) and add `CMD ["serve"]`, and `.air.toml` to build `./cmd/united` and run `serve` with a development `UNITED_MASTER_KEY`. Rewrite the `Makefile` `run` target to start air with `UNITED_MASTER_KEY` set and without `AWS_PROFILE`, `BUCKET`, `KEY_ARN`, or `AUTH_URL`. Reduce `docker-compose.yml` to the LocalStack service that the S3 storage tests need, and delete `tests/nginx.conf` with the v1 auth mock. Rewrite `README.md` to a short overview plus pointers to `site/` and `docs/`, and rewrite `AGENTS.md` with the new repository map, commands, and configuration.
+Delete the v1 files and run `go mod tidy`. Assert that `go.mod` no longer contains Gin, the AWS SDK, the S3 encryption client, or Redis. Add the `depguard` rule to `.golangci.yml`, including the `tools/security` allow entry. Update `mise.toml` build to `go build -o dist/united ./cmd/united`. Update `.goreleaser.yaml` to `main: ./cmd/united`. Update `Dockerfile` to keep `COPY united /` (goreleaser stages the binary at the build-context root) and add `CMD ["serve"]`. Update `.air.toml` to build `./cmd/united` and run `serve` with a development `UNITED_MASTER_KEY`. Rewrite the `Makefile` `run` target to start air with `UNITED_MASTER_KEY` set and without `AWS_PROFILE`, `BUCKET`, `KEY_ARN`, or `AUTH_URL`. Reduce `docker-compose.yml` to the LocalStack service that the S3 storage tests need. Delete `tests/nginx.conf` with the v1 auth mock. Rewrite `README.md` to a short overview plus pointers to `site/` and `docs/`. Rewrite `AGENTS.md` with the new repository map, commands, and configuration.
 
-Before deleting `.github/workflows/terrafrom-test.yml`, update the `main` branch required status checks to the workflows that replace it (`smoke` and `terraform-v2`); `terraform-test` is currently required and would block every pull request once its workflow is gone. Add `.github/workflows/test.yml` running `go build ./...` and `go test ./...` on pull requests, and make `smoke.yml` boot the binary, check `/api/health`, and assert the migration schema. Add `pb_data/`, `site/public/`, and `site/resources/` to `.gitignore`, and disable Renovate automerge for PocketBase, OpenTelemetry, Hugo, and Hextra so pinned versions move deliberately. Restrict the Docker tag templates in `.goreleaser.yaml` to `{{ .Tag }}` and `{{ .Major }}.{{ .Minor }}` for this release, so `latest` and `v0` keep pointing at the v0.1.7 image.
+Before you delete `.github/workflows/terrafrom-test.yml`, update the `main` branch required status checks to the workflows that replace it (`smoke` and `terraform-v2`). `terraform-test` is currently required and would block every pull request once its workflow is gone. Add `.github/workflows/test.yml` to run `go build ./...` and `go test ./...` on pull requests. Make `smoke.yml` boot the binary, verify `/api/health`, and assert the migration schema. Add `pb_data/`, `site/public/`, and `site/resources/` to `.gitignore`. Disable Renovate automerge for PocketBase, OpenTelemetry, Hugo, and Hextra, so pinned versions move deliberately. Restrict the Docker tag templates in `.goreleaser.yaml` to `{{ .Tag }}` and `{{ .Major }}.{{ .Minor }}` for this release, so `latest` and `v0` keep pointing at the v0.1.7 image.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -810,8 +815,8 @@ git commit -m "feat: boot PocketBase and remove the Gin/S3/Redis implementation"
 
 **Files:**
 - Create: `site/hugo.yaml`, `site/go.mod`, `site/go.sum`, `site/content/_index.md`, `site/content/how-to/_index.md`, `site/content/reference/_index.md`, `site/content/explanation/_index.md`, `site/content/tutorials/_index.md`, `.markdownlint-cli2.yaml`, `.github/workflows/docs.yml`
-- Modify: `docs/adr/0001-embed-pocketbase-in-process.md` (already committed; extend it)
-- Modify: `README.md`
+- Change: `docs/adr/0001-embed-pocketbase-in-process.md` (already committed, extend it)
+- Change: `README.md`
 - Test: `site/` build
 
 - [ ] **Step 1: Write the failing docs check**
@@ -820,11 +825,18 @@ Add a `site` build step to the standard gate. Run `hugo --panicOnWarning --print
 
 - [ ] **Step 2: Create the Hextra scaffold**
 
-Pin `hugo-extended` `0.166.0` in `mise.toml` (the mise tool name is `hugo-extended`, not `hugo`). Add Hextra `v0.13.0` as a Hugo module in `site/go.mod`. Create the four Diátaxis sections and a landing page outside them. Configure FlexSearch, breadcrumbs, TOC, code copy, edit links to `main`, and tree navigation with explicit weights. Add `docs:serve`, `docs:build`, and `docs:check` tasks to `mise.toml`, pin `markdownlint-cli2` and `lychee` there, and add `.github/workflows/docs.yml` running `mise run docs:check` when `site/` or `docs/` changes. Do not add a version dropdown yet; it arrives with the first release.
+Pin `hugo-extended` `0.166.0` in `mise.toml` (the mise tool name is `hugo-extended`, not `hugo`). Add Hextra `v0.13.0` as a Hugo module in `site/go.mod`. Create the four Diátaxis sections and a landing page outside them. Configure FlexSearch, breadcrumbs, TOC, code copy, edit links to `main`, and tree navigation with explicit weights. Add `docs:serve`, `docs:build`, and `docs:check` tasks to `mise.toml`. Pin `markdownlint-cli2` and `lychee` there. Add `.github/workflows/docs.yml` to run `mise run docs:check` when `site/` or `docs/` changes. Do not add a version dropdown yet because it arrives with the first release.
 
 - [ ] **Step 3: Write the ADR**
 
-Extend the committed ADR to record: one embedded PocketBase process owns the listener and `/api`; United's domain packages stay PocketBase-free; v1 source is removed in slice 1 and survives only in `version-0.1x`, tags, and releases; the release is `v0.2.0`. Include the alternatives (separate service, long-lived branch) and why they were rejected.
+Extend the committed ADR to record these decisions:
+
+- One embedded PocketBase process owns the listener and `/api`.
+- United's domain packages stay PocketBase-free.
+- v1 source is removed in slice 1. It survives only in `version-0.1x`, tags, and releases.
+- The release is `v0.2.0`.
+
+Include the alternatives (separate service, long-lived branch) and why they were rejected.
 
 - [ ] **Step 4: Run the build**
 
@@ -842,7 +854,7 @@ git commit -m "docs: scaffold the Hugo site and record the embedded PocketBase A
 
 ## Slice 2: Terraform Data Plane
 
-Slice gate: the real Terraform harness passes init, plan, apply, refresh, state pull, destroy, the migration test, and the lock matrix; every contract and auth case passes.
+Slice gate: the real Terraform harness passes init, plan, apply, refresh, state pull, destroy, the migration test, and the lock matrix. Every contract and auth case passes.
 
 ### Task 2.1: Integration harness and credential verification
 
@@ -859,8 +871,8 @@ Test names: `TestVerifyCredentialSuccess`, `TestVerifyCredentialUnknownUser`, `T
 
 Assertions:
 - A seeded group and credential verify with the correct password.
-- Unknown user and wrong password both return the same `apperr.ClassUnauthorized` and take comparable time (measure with a generous bound, at least 10 ms, not a strict benchmark).
-- Disabled returns unauthorized; suspended group returns a `Credential` with `GroupStatus="suspended"` so the handler can return 403.
+- Unknown user and wrong password both return the same `apperr.ClassUnauthorized`. Both take comparable time. Measure this with a generous bound of at least 10 ms, not a strict benchmark.
+- Disabled returns unauthorized. A suspended group returns a `Credential` with `GroupStatus="suspended"`, so the handler can return 403.
 - The password hash is bcrypt and the plaintext never appears in the record.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -870,9 +882,9 @@ Expected: FAIL because the store does not exist.
 
 - [ ] **Step 3: Implement the harness and verifier**
 
-The harness wraps `tests.NewTestApp(t.TempDir())`, registers `t.Cleanup(app.Cleanup)`, calls `wire.Register`, and returns the app. `Cleanup` closes the database and removes the cloned data directory; it is required even when the data directory came from `t.TempDir()`. The verifier finds the credential with `FindFirstRecordByFilter("terraform_credentials", "username = {:username}", dbx.Params{"username": username})`, calls `Record.ValidatePassword`, checks `enabled`, and loads the group status. The username comes from an HTTP Basic Auth header, so it is untrusted input; never interpolate it into the filter. For an unknown username, validate against a fixed `core.PasswordFieldValue{Hash: dummy}` so the bcrypt cost matches. Never log the password. `TestVerifyCredentialRejectsFilterInjection` sends a username containing `" || 1=1` and asserts it is treated as a literal, not a predicate.
+The harness wraps `tests.NewTestApp(t.TempDir())`, registers `t.Cleanup(app.Cleanup)`, calls `wire.Register`, and returns the app. `Cleanup` closes the database and deletes the cloned data directory. It is required even when the data directory came from `t.TempDir()`. The verifier finds the credential with `FindFirstRecordByFilter("terraform_credentials", "username = {:username}", dbx.Params{"username": username})`, calls `Record.ValidatePassword`, checks `enabled`, and loads the group status. The username comes from an HTTP Basic Auth header, so it is untrusted input. Never interpolate it into the filter. For an unknown username, verify against a fixed `core.PasswordFieldValue{Hash: dummy}` so the bcrypt cost matches. Never log the password. `TestVerifyCredentialRejectsFilterInjection` sends a username containing `" || 1=1` and asserts that the code treats it as a literal and not as a predicate.
 
-Implement `Store.CreateGroup` in the same task because the harness needs it: one `RunInTransaction` creates the group, the creator's owner membership, the wrapped data key, the credential with a 32-byte base64url secret, and the `group_created` audit event. Slice 3 adds the API hook and the one-time secret response on top of it.
+Implement `Store.CreateGroup` in the same task because the harness needs it. One `RunInTransaction` creates the group, the creator's owner membership, the wrapped data key, the credential with a 32-byte base64url secret, and the `group_created` audit event. Slice 3 adds the API hook and the one-time secret response on top of it.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -926,7 +938,11 @@ Expected: FAIL because the handlers do not exist.
 
 - [ ] **Step 3: Implement the read path**
 
-`httpapi.Register` creates one state route group and binds a middleware before authentication that copies `?ID=` into the request context and clears `e.Request.URL.RawQuery`, so a request rejected by authentication, body limit, or panic never logs a lock ID. The Basic Auth middleware then parses the header, calls `VerifyCredential`, compares `credential.GroupID` to the route group, and stores the credential in the request context. Handlers read the lock ID from the context. Bind `apis.BodyLimit(limit)` on the group, where `limit` is the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB, so the default 32 MiB limit never caps a state. Register `GET /state/{group}/{name}`, an explicit `HEAD` route returning 405, and a method-less fallback returning 405 with `Allow`. Unbind `apis.DefaultCorsMiddlewareId` on the group so `OPTIONS` reaches the fallback with an `Allow` header instead of the CORS 204. The handler calls `ReadState`, maps `apperr` classes to statuses, and writes `Content-MD5`. `ReadState` finds the logical state by `group = {:group} && name = {:name}` with `dbx.Params`, requires `status=active`, decrypts the current version, verifies length and SHA-256, and returns the bytes. No filter in this path concatenates a route or query value; `TestReadStateRejectsFilterInjection` proves a crafted name cannot alter the predicate.
+`httpapi.Register` creates one state route group. It binds a middleware before authentication that copies `?ID=` into the request context and clears `e.Request.URL.RawQuery`. A request rejected by authentication, body limit, or panic therefore never logs a lock ID. The Basic Auth middleware then parses the header, calls `VerifyCredential`, compares `credential.GroupID` to the route group, and stores the credential in the request context. Handlers read the lock ID from the context.
+
+Bind `apis.BodyLimit(limit)` on the group, where `limit` is the base64 size of `UNITED_MAX_STATE_SIZE` plus 64 KiB, so the default 32 MiB limit never caps a state. Register `GET /state/{group}/{name}`, an explicit `HEAD` route that returns 405, and a method-less fallback that returns 405 with `Allow`. Unbind `apis.DefaultCorsMiddlewareId` on the group, so `OPTIONS` reaches the fallback with an `Allow` header instead of the CORS 204. The handler calls `ReadState`, maps `apperr` classes to statuses, and writes `Content-MD5`.
+
+`ReadState` finds the logical state by `group = {:group} && name = {:name}` with `dbx.Params`. It requires `status=active`, decrypts the current version, verifies the length and SHA-256, and returns the bytes. No filter in this path concatenates a route or query value. `TestReadStateRejectsFilterInjection` proves that a crafted name cannot change the predicate.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -944,7 +960,7 @@ git commit -m "feat(httpapi): add Basic Auth and Terraform state reads"
 
 **Files:**
 - Create: `internal/store/versions.go`
-- Modify: `internal/httpapi/state.go`
+- Change: `internal/httpapi/state.go`
 - Test: `internal/store/versions_test.go`, `internal/httpapi/state_test.go`
 
 **Interfaces:**
@@ -957,13 +973,13 @@ Test names: `TestPublishCreatesVersion`, `TestPublishSupersedesCurrent`, `TestPu
 Assertions:
 - The first unlocked write creates `logical_states` with `status=active`, one version, and one `logical_state_created` audit event carrying the version ID.
 - A second write creates a new version, sets `non_current_at` on the prior version, updates `current_version`, and writes `state_version_published`.
-- A reader started before a write sees the old version; after commit it sees the new version.
-- `Content-Length` above the configured limit returns 413 before reading; a chunked body crossing the limit returns 413; a declared length that differs from the received length returns 400.
+- A reader that starts before a write sees the old version. After commit it sees the new version.
+- A `Content-Length` above the configured limit returns 413 before any read. A chunked body that crosses the limit returns 413. A declared length that differs from the received length returns 400.
 - A bad `Content-MD5` returns 400.
-- A live lease requires the exact `?ID=`; missing or mismatched returns 409; a stale ID with no live lease returns 409.
-- An injected audit failure rolls back the version and pointer and leaves the written object unreferenced; the orphan scanner removes it once it passes the age guard.
-- A write to a tombstoned state returns `409`; a write to a purged state returns `410`; neither changes the state record.
-- A successful write under a live lease sets `lock_expires_at` to the later of its current value and `now + effective duration`, in the same transaction, and never shortens an existing expiry (ADR 0002).
+- A live lease requires the exact `?ID=`. A missing or mismatched ID returns 409. A stale ID with no live lease also returns 409.
+- An injected audit failure rolls back the version and pointer and leaves the written object unreferenced. The orphan scanner deletes it once it passes the age guard.
+- A write to a tombstoned state returns `409`. A write to a purged state returns `410`. Neither changes the state record.
+- A successful write under a live lease sets `lock_expires_at` to the later of its current value and `now + effective duration`, in the same transaction. It never shortens an existing expiry (ADR 0002).
 - A first write to a lineage created empty by `LOCK` emits exactly one `state_version_published` event and no second `logical_state_created` event.
 - `POST` and `PUT` return `200` with an empty body.
 - `PUT` behaves exactly like `POST`.
@@ -975,9 +991,23 @@ Expected: FAIL because publication does not exist.
 
 - [ ] **Step 3: Implement publication**
 
-Read and validate the body before opening the transaction. Compute byte count and SHA-256. In `RunInTransaction` with `txApp`: recheck group status, logical-state status (`tombstoned` returns 409, `purged` returns 410), and lock authority; create the logical state when absent; unwrap the group key; encrypt; create the version record with the file field; save; set the prior version's `non_current_at`; set `current_version` and `status=active`; extend the live lease to `max(current expiry, now + effective duration)` when a lease is live; insert exactly one audit event (`logical_state_created` only when this write created the lineage, otherwise `state_version_published`); commit. Use `txApp` for every read and write inside the transaction, and bind `group` and `name` with `dbx.Params`.
+Read and verify the body before you open the transaction. Compute the byte count and SHA-256.
 
-The file write happens during `Save`, inside the transaction, because PocketBase writes `FileField` content as part of the save. A rollback therefore leaves an unreferenced object rather than a partial version. This is the documented failure domain (ADR 0001) and Task 4.3 is the cleanup path; `TestPublishRollbackLeavesReconcilableOrphan` proves the object is discoverable and removable.
+In `RunInTransaction` with `txApp`, do these steps in order:
+
+1. Recheck the group status, the logical-state status (`tombstoned` returns 409, `purged` returns 410), and the lock authority.
+2. Create the logical state when it is absent.
+3. Unwrap the group key and encrypt the body.
+4. Create the version record with the file field, then save it.
+5. Set the prior version's `non_current_at`.
+6. Set `current_version` and `status=active`.
+7. Extend the live lease to `max(current expiry, now + effective duration)` when a lease is live.
+8. Insert exactly one audit event. Use `logical_state_created` only when this write created the lineage. Otherwise use `state_version_published`.
+9. Commit.
+
+Use `txApp` for every read and write inside the transaction. Bind `group` and `name` with `dbx.Params`.
+
+The file write happens during `Save`, inside the transaction, because PocketBase writes `FileField` content as part of the save. A rollback therefore leaves an unreferenced object rather than a partial version. This is the documented failure domain (ADR 0001). Task 4.3 is the cleanup path. `TestPublishRollbackLeavesReconcilableOrphan` proves that the object is discoverable and removable.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1013,11 +1043,11 @@ Assertions:
 - `LOCK` on `tombstoned` or `purged` returns 410 with a non-LockInfo body.
 - Missing `Content-Type`, missing `ID`/`Operation`/`Version`, or an invalid `Created` returns 400.
 - Empty `Info`, `Path`, and `Who` are accepted.
-- `UNLOCK` with the matching live ID returns 200; mismatch returns 409; absent returns 200; an empty body returns 400.
+- `UNLOCK` with the matching live ID returns 200. A mismatch returns 409. An absent lease returns 200. An empty body returns 400.
 - `Operation` values `migration source state` and `migration destination state` are accepted.
 - Two concurrent acquisitions with different IDs produce exactly one `200` and one `423`.
 - A wrong `Content-Type`, a `Content-MD5` mismatch, or a body larger than 1 MiB is rejected instead of reaching the store.
-- `UNLOCK` reads the ID from the JSON body, accepts an ID-only object (empty `Operation`, `Version`, `Info`, `Path`, and `Who`, zero `Created`), and rejects a body with no non-empty `ID` with `400`, even when no lease exists.
+- `UNLOCK` reads the ID from the JSON body. It accepts an ID-only object with empty `Operation`, `Version`, `Info`, `Path`, and `Who`, and a zero `Created`. It rejects a body with no non-empty `ID` with `400`, even when no lease exists.
 - A mismatched live ID returns `409` with no lock payload.
 - `PATCH`, `HEAD`, `OPTIONS`, and any other method on `/state/{group}/{name}` returns 405 with `Allow: GET, POST, PUT, DELETE, LOCK, UNLOCK`.
 
@@ -1028,7 +1058,9 @@ Expected: FAIL because lock persistence does not exist.
 
 - [ ] **Step 3: Implement lock persistence and handlers**
 
-Validate `LOCK` and `UNLOCK` with separate rules: `LOCK` requires `ID`, `Operation`, `Version`, and a valid `Created`; `UNLOCK` requires only a non-empty `ID` in the JSON body. Preserve the raw `LOCK` JSON. Acquire inside a short `RunInTransaction` that checks group and state status and the current lease, and write the creation audit event when the state is new. Bind `group` and `name` with `dbx.Params` in every lookup. Use the `state.Acquire` and `state.Release` domain functions. Write the `423` body directly with `e.Response.WriteHeader(423)` and the exact stored JSON rather than through `ApiError.RawData()`, so PocketBase's activity logger never persists lock JSON. Bind `apis.BodyLimit(1<<20)` on the lock routes. Register `LOCK` and `UNLOCK` with `e.Router.Route`, add the explicit `HEAD` route and method-less fallback from Task 2.2, and verify `OPTIONS` reaches the fallback after the CORS middleware is unbound.
+Verify `LOCK` and `UNLOCK` with separate rule sets. `LOCK` requires `ID`, `Operation`, `Version`, and a valid `Created`. `UNLOCK` requires only a non-empty `ID` in the JSON body. Preserve the raw `LOCK` JSON. Acquire inside a short `RunInTransaction` that checks the group status, the state status, and the current lease. Write the creation audit event when the state is new. Bind `group` and `name` with `dbx.Params` in every lookup. Use the `state.Acquire` and `state.Release` domain functions.
+
+Write the `423` body directly with `e.Response.WriteHeader(423)` and the exact stored JSON. Do not use `ApiError.RawData()`, so PocketBase's activity logger never persists lock JSON. Bind `apis.BodyLimit(1<<20)` on the lock routes. Register `LOCK` and `UNLOCK` with `e.Router.Route`. Add the explicit `HEAD` route and the method-less fallback from Task 2.2. Verify that `OPTIONS` reaches the fallback after the CORS middleware is unbound.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1045,7 +1077,7 @@ git commit -m "feat: add Terraform lock leases and LOCK/UNLOCK handlers"
 ### Task 2.5: Tombstone and `DELETE`
 
 **Files:**
-- Modify: `internal/store/states.go`, `internal/httpapi/state.go`
+- Change: `internal/store/states.go`, `internal/httpapi/state.go`
 - Test: `internal/store/states_test.go`, `internal/httpapi/state_test.go`
 
 **Interfaces:**
@@ -1056,7 +1088,7 @@ git commit -m "feat: add Terraform lock leases and LOCK/UNLOCK handlers"
 Test names: `TestDeleteTombstonesState`, `TestDeleteEmptyCreatesTombstone`, `TestDeleteRequiresLockIDWhenLive`, `TestDeleteWithoutLiveLeaseIsIdempotent`, `TestDeleteStaleIDWithoutLeaseSucceeds`, `TestDeleteNeverCreatedIsNoOp`, `TestDeleteRepeatIsNoOp`, `TestDeletePurgedReturns200`, `TestDeleteClearsMatchingLease`, `TestDeleteWritesAuditEvent`.
 
 Assertions:
-- A live lease requires `?ID=`; missing or mismatched returns 409.
+- A live lease requires `?ID=`. A missing or mismatched ID returns 409.
 - A matching delete tombstones the state, clears the lease, sets `non_current_at` on the current version, and writes the tombstone audit event atomically.
 - Repeating `DELETE` returns 200.
 - `DELETE` on a never-created path returns 200 and creates no record.
@@ -1072,7 +1104,7 @@ Expected: FAIL because tombstoning does not exist.
 
 - [ ] **Step 3: Implement tombstoning**
 
-In one `RunInTransaction`: recheck group/state/lock; if the state is absent or already tombstoned or purged, return success without writing; otherwise set `status=tombstoned`, `tombstoned_at`, clear lock fields, set the current version's `non_current_at` when a current version exists, keep `current_version` as the restoration target, and insert the audit event. An `empty` state becomes an empty tombstone rather than a no-op.
+In one `RunInTransaction`, recheck the group, state, and lock status. If the state is absent or already tombstoned or purged, return success without writing. Otherwise, set `status=tombstoned` and `tombstoned_at`. Clear the lock fields. Set the current version's `non_current_at` when a current version exists. Keep `current_version` as the restoration target. Insert the audit event. An `empty` state becomes an empty tombstone rather than a no-op.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1142,14 +1174,17 @@ Test names: `TestVersionFieldsImmutable`, `TestLogicalStateCombinationValid`, `T
 
 Assertions:
 - A direct `app.Save` that changes a version's file, byte count, SHA-256, or logical-state relation is rejected.
-- Committed combinations follow #415: empty has no versions and no pointer; active has a current version with no `non_current_at`; tombstoned may keep the former current version with `non_current_at`; purged has no pointer or versions.
-- `OnRecordEnrich` hides `wrapped_key`, `password`, `lock_payload`, and file fields; it adds `lock_id`, `lock_acquired_at`, `lock_expires_at`, and current/non-current status.
+- Committed combinations follow #415. `empty` has no versions and no pointer. `active` has a current version with no `non_current_at`. `tombstoned` may keep the former current version with `non_current_at`. `purged` has no pointer or versions.
+- `OnRecordEnrich` hides `wrapped_key`, `password`, `lock_payload`, and file fields. It adds `lock_id`, `lock_acquired_at`, `lock_expires_at`, and the current/non-current status.
 - A generic REST view of `state_versions` never exposes the file name or file URL.
-- `OnRecordEnrich` strips `groups.confirm_destructive` and `terraform_credentials.rotate_credential` after the default enrichment, for every principal including superusers, and both fields are `false` after every governed save.
+- `OnRecordEnrich` strips `groups.confirm_destructive` and `terraform_credentials.rotate_credential` after the default enrichment, for every principal including superusers. Both fields are `false` after every governed save.
 - A logical-state save that sets some but not all lock fields is rejected.
-- The store's own publication, tombstone, and restore saves pass every validator; a direct `PATCH /api/collections/logical_states/records/{id}` that changes `non_current_at`, `current_version`, `status`, or a lock field is rejected by `OnRecordUpdateRequest`.
-- A direct save with a name that fails `NormalizeName`, a status transition that `CanTransition` rejects, or a lease override outside 5m–24h is rejected on every save path.
-- Every hook in this task calls `e.Next()` exactly once on the success path; `ExpectedEvents` shows no skipped framework event.
+- The store's own publication, tombstone, and restore saves pass every validator. A direct `PATCH /api/collections/logical_states/records/{id}` that changes `non_current_at`, `current_version`, `status`, or a lock field is rejected by `OnRecordUpdateRequest`.
+- A direct save is rejected on every save path in three cases:
+  - The name fails `NormalizeName`.
+  - `CanTransition` rejects the status transition.
+  - A lease override is outside 5m–24h.
+- Every hook in this task calls `e.Next()` exactly once on the success path. `ExpectedEvents` shows no skipped framework event.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1158,7 +1193,13 @@ Expected: FAIL because the hooks do not exist.
 
 - [ ] **Step 3: Implement the hooks**
 
-Bind the hooks by family. `OnRecordValidate` for `state_versions` and `logical_states` enforces invariants that must hold on every save: immutable version fields, the committed logical-state combination, all-or-none lock fields, `NormalizeName`, `CanTransition`, and the 5m–24h lease override. `OnRecordUpdateRequest` for `logical_states` rejects API-path changes to `non_current_at`, `current_version`, `status`, and lock fields, so a direct `PATCH` cannot forge a lifecycle transition; the store's own `txApp.Save` calls are model saves and are not blocked. Bind `OnRecordEnrich` for the domain collections, call `e.Record.WithCustomData(true)` before attaching the computed current/non-current marker, and strip the two intent fields after `e.Next()` (PocketBase unhides fields for superusers during default enrichment, so the strip must follow it). These validators prevent accidents and data corruption; they are not a containment boundary against a superuser (ADR 0002). Keep the hooks idempotent and free of secrets in errors, and call `e.Next()` in every hook that does not deliberately replace the action.
+Bind the hooks by family.
+
+- `OnRecordValidate` for `state_versions` and `logical_states` enforces invariants that must hold on every save: immutable version fields, the committed logical-state combination, all-or-none lock fields, `NormalizeName`, `CanTransition`, and the 5m–24h lease override.
+- `OnRecordUpdateRequest` for `logical_states` rejects API-path changes to `non_current_at`, `current_version`, `status`, and lock fields. A direct `PATCH` therefore cannot forge a lifecycle transition. The store's own `txApp.Save` calls are model saves and are not blocked.
+- `OnRecordEnrich` for the domain collections calls `e.Record.WithCustomData(true)` before it attaches the computed current/non-current marker. It strips the two intent fields after `e.Next()`, because PocketBase unhides fields for superusers during default enrichment and the strip must follow it.
+
+These validators prevent accidents and data corruption. They are not a containment boundary against a superuser (ADR 0002). Keep the hooks idempotent and free of secrets in errors. Call `e.Next()` in every hook that does not deliberately replace the action.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1177,7 +1218,7 @@ git commit -m "feat(hooks): enforce state invariants and hide protected fields"
 **Files:**
 - Create: `tests/smoke/`, rewrite `tests/main.tf`, `tests/Makefile`
 - Create: `tests/backends/main.tf`, `cmd/united/devseed.go`, `.github/workflows/terraform-v2.yml`, `.github/workflows/terraform-matrix.yml`
-- Modify: `mise.toml` (add `opentofu`)
+- Change: `mise.toml` (add `opentofu`)
 - Test: `tests/` harness
 
 - [ ] **Step 1: Write the failing harness**
@@ -1191,9 +1232,17 @@ Expected: FAIL until the setup command and route are wired.
 
 - [ ] **Step 3: Add the setup command and workflow**
 
-Add `united dev-seed` as a hidden cobra subcommand in `cmd/united/devseed.go`, guarded by `DEV=true`, that calls `Store.CreateGroup`, prints the group record ID and the Basic Auth values, and refuses to run without `DEV=true`.
+Add `united dev-seed` as a hidden cobra subcommand in `cmd/united/devseed.go`, guarded by `DEV=true`. It calls `Store.CreateGroup`, prints the group record ID and the Basic Auth values, and refuses to run without `DEV=true`.
 
-Add `.github/workflows/terraform-v2.yml` that starts the binary and runs the harness, the migration test, and the lock matrix on Terraform 1.17. Add `.github/workflows/terraform-matrix.yml` with a matrix of Terraform 1.16 and 1.17 plus OpenTofu 1.12 and 1.13, triggered after the unit-test workflow succeeds, with `opentofu` added to `mise.toml`. The matrix covers the full harness, the migration test, the lock-payload matrix including the two `migration ... state` operations and an empty-body `UNLOCK`, the method matrix, the 15,000,000-byte limit at and one byte over, and force-unlock: OpenTofu succeeds, and Terraform is expected to fail because upstream ignores the supplied ID. Keep the smoke workflow for boot and health.
+Add `.github/workflows/terraform-v2.yml`. It starts the binary and runs the harness, the migration test, and the lock matrix on Terraform 1.17. Add `.github/workflows/terraform-matrix.yml` with a matrix of Terraform 1.16 and 1.17 plus OpenTofu 1.12 and 1.13. Trigger it after the unit-test workflow succeeds, and add `opentofu` to `mise.toml`. The matrix covers:
+
+- The full harness and the migration test.
+- The lock-payload matrix, including the two `migration ... state` operations and an empty-body `UNLOCK`.
+- The method matrix.
+- The 15,000,000-byte limit at and one byte over.
+- Force-unlock. OpenTofu succeeds, and Terraform is expected to fail because upstream ignores the supplied ID.
+
+Keep the smoke workflow for boot and health.
 
 The migration test archives a pre-switch `terraform state pull`, switches with `init -migrate-state`, then requires a post-switch `plan` with no changes and an identical `state list`. It also covers a failed destination POST, which must leave the source state and `.terraform/terraform.tfstate` untouched, and a retry.
 
@@ -1213,7 +1262,7 @@ git commit -m "ci: add the Terraform v2 integration harness and client matrix"
 
 ## Slice 3: Administration and Lifecycle
 
-Slice gate: the rule matrix passes for anonymous, verified non-member, member, owner, and superuser across every collection; lifecycle invariants, the account lifecycle, and the full audit catalog pass.
+Slice gate: the rule matrix passes for anonymous, verified non-member, member, owner, and superuser across every collection. Lifecycle invariants, the account lifecycle, and the full audit catalog pass.
 
 ### Task 3.1: Rules migration
 
@@ -1257,15 +1306,15 @@ owner(G)  = @collection.group_memberships:o.user = @request.auth.id && @collecti
 | `audit_events`, `retired_groups`, `system_settings` | `nil` | `nil` | `nil` | `nil` | `nil` |
 | `users` | `id = @request.auth.id` | `id = @request.auth.id` | `nil` until Task 3.9 | `id = @request.auth.id` | `id = @request.auth.id` |
 
-Rules are not the whole boundary; the request hooks narrow them:
+Rules are not the whole boundary. The request hooks narrow them:
 
-- `group_invitations.updateRule` lets the target user reach the record, but the hook accepts only the acceptance transition and rejects changes to `group`, `email`, `invited_by`, and `expires_at`.
-- `terraform_credentials.updateRule` lets an owner reach the record, but the hook accepts only `rotate_credential` and `enabled` transitions; direct writes to `password`, `username`, and `group` are rejected.
+- `group_invitations.updateRule` lets the target user reach the record, but the hook accepts only the acceptance transition. It rejects changes to `group`, `email`, `invited_by`, and `expires_at`.
+- `terraform_credentials.updateRule` lets an owner reach the record, but the hook accepts only `rotate_credential` and `enabled` transitions. It rejects direct writes to `password`, `username`, and `group`.
 - `logical_states.updateRule` lets an owner reach the record, but Task 2.7's `OnRecordUpdateRequest` rejects anything outside the tombstone and restore transitions.
-- `users.createRule` stays `nil` in Task 1.8 and opens in Task 3.9, after SMTP and the edge rate limit exist. The self-update allowlist is `name`, `email`, `password`, and `disabled=true`; everything else is rejected.
+- `users.createRule` stays `nil` in Task 1.8 and opens in Task 3.9, after SMTP and the edge rate limit exist. The self-update allowlist is `name`, `email`, `password`, and `disabled=true`. Everything else is rejected.
 - `groups.createRule` allows any authenticated user to create a group. This is an internal tool, and the edge rate limit is the abuse control.
 
-Add the expressions as constants and test them with the real query engine. If `state_versions` cannot resolve `logical_state.group` in the rule engine, add a denormalized `group` relation to `state_versions`, set it in the store on create, and index it; do not widen the rule.
+Add the expressions as constants and test them with the real query engine. If `state_versions` cannot resolve `logical_state.group` in the rule engine, add a denormalized `group` relation to `state_versions`. Set it in the store on create and index it. Do not widen the rule.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1283,7 +1332,7 @@ git commit -m "feat(migrations): add membership-scoped collection rules"
 
 **Files:**
 - Create: `internal/hooks/groups.go`
-- Modify: `internal/store/groups.go`
+- Change: `internal/store/groups.go`
 - Test: `internal/store/groups_test.go`, `internal/hooks/groups_test.go`
 
 **Interfaces:**
@@ -1295,7 +1344,7 @@ Test names: `TestCreateGroupTransaction`, `TestCreateGroupReturnsSecretOnce`, `T
 
 Assertions:
 - One transaction creates the group, owner membership, wrapped data key, credential, and `group_created` audit event.
-- The response carries the credential password exactly once; a later list or view never contains it.
+- The response carries the credential password exactly once. A later list or view never contains it.
 - The credential username is random, non-secret, unique, and independent of the group route ID.
 - The password is 32 random bytes as unpadded base64url.
 - A failure in any step rolls back the whole creation.
@@ -1307,7 +1356,7 @@ Expected: FAIL because group creation does not exist.
 
 - [ ] **Step 3: Implement creation**
 
-Reuse the slice 2 `Store.CreateGroup`, which already commits the group, owner membership, wrapped data key, credential, and `group_created` audit event in one transaction. In the `OnRecordCreateRequest` hook for `groups`, authorize the caller, call `Store.CreateGroup`, set `X-United-Credential` on the response to the one-time secret, and return the created group as JSON without calling `e.Next()`. Returning without `e.Next()` is the deliberate terminal replacement: the hook performs the create itself, so the default create handler must not run. Add a comment that says so, and let `ExpectedEvents` assert the default create does not fire a second time. The hook uses `e.App` and never a captured parent app. The deployment's CORS configuration must expose that header. The header is the only place the secret appears; it is never persisted, never in the schema, and never in list or view responses.
+Reuse the slice 2 `Store.CreateGroup`, which already commits the group, owner membership, wrapped data key, credential, and `group_created` audit event in one transaction. In the `OnRecordCreateRequest` hook for `groups`, authorize the caller, call `Store.CreateGroup`, set `X-United-Credential` on the response to the one-time secret, and return the created group as JSON without calling `e.Next()`. Returning without `e.Next()` is the deliberate terminal replacement. The hook performs the create itself, so the default create handler must not run. Add a comment that says so, and let `ExpectedEvents` assert that the default create does not fire a second time. The hook uses `e.App` and never a captured parent app. The deployment's CORS configuration must expose that header. The header is the only place the secret appears. It is never persisted, never in the schema, and never in list or view responses.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1335,7 +1384,7 @@ git commit -m "feat: create groups with wrapped keys and one-time credentials"
 Test names: `TestInviteExistingUser`, `TestInviteReplacesPending`, `TestInvitationExpires`, `TestAcceptCreatesMember`, `TestAcceptSingleUse`, `TestFinalOwnerGuard`, `TestLeaveGroup`, `TestPromoteDemote`, `TestMembershipAudit`.
 
 Assertions:
-- Only owners invite; the target must be an existing user.
+- Only owners invite. The target must be an existing user.
 - Reissuing replaces the pending invitation.
 - Acceptance creates a `member` membership atomically and deletes the invitation.
 - The final active owner cannot leave, be removed, be demoted, be deactivated, or be deleted.
@@ -1348,7 +1397,7 @@ Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Use request hooks for the API paths and store methods for the transactions. Validate the actor, group status, role, expiry, and final-owner invariant. Use the `system_settings.invitation_ttl_days` value for expiry. The final-owner count uses a bound filter, for example `FindRecordsByFilter("group_memberships", "group = {:group} && role = 'owner' && status = 'active'", "", 2, 0, dbx.Params{"group": groupID})`, inside the same transaction that changes the membership; never concatenate the group ID into the predicate.
+Use request hooks for the API paths and store methods for the transactions. Verify the actor, group status, role, expiry, and final-owner invariant. Use the `system_settings.invitation_ttl_days` value for expiry. The final-owner count uses a bound filter, for example `FindRecordsByFilter("group_memberships", "group = {:group} && role = 'owner' && status = 'active'", "", 2, 0, dbx.Params{"group": groupID})`, inside the same transaction that changes the membership. Never concatenate the group ID into the predicate.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1376,7 +1425,7 @@ git commit -m "feat: add invitation and membership lifecycle with final-owner gu
 Test names: `TestRotateInvalidatesOld`, `TestRotateReturnsSecretOnce`, `TestRotateDisabledEnables`, `TestDisablePreservesPassword`, `TestEnableRestoresPassword`, `TestCredentialGuardConflict`, `TestRotationAudit`.
 
 Assertions:
-- Rotation replaces the verifier atomically; the old password fails immediately and the new one succeeds.
+- Rotation replaces the verifier atomically. The old password fails immediately and the new one succeeds.
 - The new secret appears exactly once.
 - Rotating a disabled credential enables it.
 - Disable and re-enable preserve the password.
@@ -1390,7 +1439,7 @@ Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Use the write-only `rotate_credential` intent field. Validate the actor and target, consume and clear the flag in the same transaction, mint the new secret, set the password, update timestamps, and audit in one transaction. Return the new secret only in the `X-United-Credential` response header, exactly once. Implement the guard with a per-credential mutex or a database compare-and-swap; a contention returns 409.
+Use the write-only `rotate_credential` intent field. Verify the actor and target. In one transaction, consume and clear the flag, mint the new secret, set the password, update the timestamps, and write the audit event. Return the new secret only in the `X-United-Credential` response header, exactly once. Implement the guard with a per-credential mutex or a database compare-and-swap. A contention returns 409.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1418,11 +1467,11 @@ git commit -m "feat: add credential rotation, disabling, and enabling"
 Test names: `TestSuspendReactivates`, `TestRetirementFreezesDataPlane`, `TestRetirementCancel`, `TestRetirementEligible`, `TestRetentionBounds`, `TestRetentionAudit`, `TestLeaseOverrideBounds`, `TestLeaseOverrideAudit`.
 
 Assertions:
-- Only a superuser suspends or reactivates; only an owner requests retirement for an active group; a superuser requests it for a suspended group.
+- Only a superuser suspends or reactivates. Only an owner requests retirement for an active group. A superuser requests it for a suspended group.
 - Pending retirement freezes Terraform operations but leaves administration available.
 - Cancellation restores the previous status and is owner-allowed only while ineligible.
-- Retention is 1–365 days, default 30; every change audits `{from,to}`.
-- Lease overrides are 5m–24h and audit; existing leases keep their expiry.
+- Retention is 1–365 days, default 30. Every change audits `{from,to}`.
+- Lease overrides are 5m–24h and audit. Existing leases keep their expiry.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1431,7 +1480,7 @@ Expected: FAIL because the lifecycle does not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Validate the actor and transition, set timestamps and status, and audit atomically. Consume and clear `confirm_destructive` in the same transaction (write-only field, ADR 0002). Use the domain retention and lease validators.
+Verify the actor and transition, set the timestamps and status, and audit atomically. Consume and clear `confirm_destructive` in the same transaction (write-only field, ADR 0002). Use the domain retention and lease validators.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1448,7 +1497,7 @@ git commit -m "feat: add group suspension, retirement, retention, and lease cont
 ### Task 3.6: Tombstone and restore administration
 
 **Files:**
-- Modify: `internal/store/states.go`
+- Change: `internal/store/states.go`
 - Create: `internal/hooks/states_admin.go`
 - Test: `internal/store/states_admin_test.go`
 
@@ -1473,7 +1522,7 @@ Expected: FAIL because administration does not exist.
 
 - [ ] **Step 3: Implement tombstone and restore**
 
-Use the request hook to validate the actor and intent. Restore in a transaction, decrypt and verify before committing, and audit.
+Use the request hook to verify the actor and intent. Restore in a transaction, decrypt and verify before you commit, and write the audit event.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1490,7 +1539,7 @@ git commit -m "feat: add owner tombstone and state restoration"
 ### Task 3.7: Audit catalog and PocketBase log mirror
 
 **Files:**
-- Modify: `internal/store/audit.go`
+- Change: `internal/store/audit.go`
 - Create: `internal/hooks/logs.go`
 - Test: `internal/store/audit_test.go`, `internal/hooks/logs_test.go`
 
@@ -1505,11 +1554,11 @@ Assertions:
 - Every event type has a `schema_version=1` details validator and an actor/subject.
 - `user_deactivated`, `user_reactivated`, `user_deleted`, `user_password_changed`, and `owner_recovered` are part of the catalog.
 - Unknown details fields or missing required fields are rejected.
-- Append-only holds for every non-superuser principal: no update or delete path exists for anonymous, member, owner, or service code. A superuser can alter or delete audit rows as a trusted operator, and the trust boundary is documented rather than enforced (ADR 0002).
+- Append-only holds for every non-superuser principal: no update or delete path exists for anonymous, member, owner, or service code. A superuser can change or delete audit rows as a trusted operator, and the trust boundary is documented rather than enforced (ADR 0002).
 - The mirror forwards only `pb.type`, `pb.method`, path without query, `pb.status`, `pb.exec_time_ms`, `pb.auth`, `pb.user_ip`, `pb.remote_ip`, and `pb.error`.
 - `details`, `meta` except `request_id`, `referer`, `userAgent`, and all query strings are dropped.
 - A mirrored record produces exactly one operational log line and no `_logs` insert, so the mirror cannot recurse.
-- A record carrying `__pb_truncated__` is mirrored with the flag and without the full `data` payload; v0.40 caps `Log.Data` at about 16 KiB.
+- A record that carries `__pb_truncated__` is mirrored with the flag and without the full `data` payload. v0.40 caps `Log.Data` at about 16 KiB.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1536,7 +1585,7 @@ git commit -m "feat: complete the audit catalog and PocketBase log mirror"
 
 **Files:**
 - Create: `site/content/explanation/trust-boundary.md`, `site/content/how-to/harden-deployment.md`
-- Modify: `site/content/reference/configuration.md`
+- Change: `site/content/reference/configuration.md`
 - Test: `site/` build and link checks
 
 **Interfaces:**
@@ -1547,8 +1596,8 @@ git commit -m "feat: complete the audit catalog and PocketBase log mirror"
 Run `hugo --panicOnWarning --printPathWarnings` in `site/` and expect it to fail because the pages do not exist.
 
 Assertions after the pages exist:
-- `trust-boundary.md` states that superusers bypass every collection rule and record hook, that audit rows are not tamper-evident against them, and that validators are for correctness, not containment.
-- `harden-deployment.md` states that superuser access is for setup and backup only, that the dashboard and superuser API are reachable only over TLS behind an isolated edge, that the PocketBase superuser IP/CIDR allowlist is set in production with the `united superuser ips` recovery command recorded, that recovery from superuser misuse is restore of the backup artifact the operator configured (the built-in zip or an external point-in-time snapshot), and that registration verification requires SMTP configured through PocketBase `_params` with a sender resolved from `app.Settings().Meta`.
+- `trust-boundary.md` states three points. Superusers bypass every collection rule and record hook. Audit rows are not tamper-evident against them. Validators are for correctness, not containment.
+- `harden-deployment.md` states these rules. Superuser access is for setup and backup only. The dashboard and superuser API are reachable only over TLS behind an isolated edge. The PocketBase superuser IP/CIDR allowlist is set in production, and the `united superuser ips` recovery command is recorded. Recovery from superuser misuse is a restore of the backup artifact that the operator configured (the built-in zip or an external point-in-time snapshot). Registration verification requires SMTP through PocketBase `_params`, with a sender resolved from `app.Settings().Meta`.
 - `harden-deployment.md` also records the edge rate limits for `/state/*` credential attempts and `/api/collections/users/auth-*`, the `LimitNOFILE` and `GOMEMLIMIT` settings, and the SQLite operational notes.
 - `configuration.md` names `UNITED_MASTER_KEY`, `UNITED_MASTER_KEY_GENERATION`, `UNITED_PB_ENCRYPTION`, `UNITED_MAX_STATE_SIZE`, `UNITED_DATA_DIR`, `UNITED_LISTEN_ADDR`, `UNITED_LOCK_LEASE_DURATION`, `TELEMETRY_ENABLED`, `UNITED_ACTOR`, and `LOG_LEVEL` with their bounds and defaults. It states that `UNITED_PB_ENCRYPTION` is exactly 32 characters, is required in serve mode, and is escrowed separately from `UNITED_MASTER_KEY`.
 
@@ -1559,7 +1608,12 @@ Expected: FAIL because the pages do not exist.
 
 - [ ] **Step 3: Write the pages**
 
-Write the three pages in the Diataxis modes they belong to, link them from the explanation and how-to indexes, and keep every claim consistent with ADR 0002. `harden-deployment.md` must include a concrete systemd example with `LimitNOFILE=65535` and `Environment=GOMEMLIMIT=…`, the superuser IP/CIDR allowlist step with the `united superuser ips` recovery command, the edge rate-limit rules for `/state/*` and `/api/collections/users/auth-*`, and SQLite operational notes: one writer, no network filesystem, `WAL` enabled, and the backup quiesce step.
+Write the three pages in the Diataxis modes they belong to, and link them from the explanation and how-to indexes. Keep every claim consistent with ADR 0002. `harden-deployment.md` must include:
+
+- A concrete systemd example with `LimitNOFILE=65535` and `Environment=GOMEMLIMIT=…`.
+- The superuser IP/CIDR allowlist step with the `united superuser ips` recovery command.
+- The edge rate-limit rules for `/state/*` and `/api/collections/users/auth-*`.
+- SQLite operational notes: one writer, no network filesystem, `WAL` enabled, and the backup quiesce step.
 
 - [ ] **Step 4: Run the docs check to verify it passes**
 
@@ -1577,7 +1631,7 @@ git commit -m "docs: document the superuser trust boundary and deployment harden
 
 **Files:**
 - Create: `internal/hooks/users.go`, `internal/store/users.go`, `site/content/how-to/manage-accounts.md`
-- Modify: `internal/migrations/202611210001_schema.go`
+- Change: `internal/migrations/202611210001_schema.go`
 - Test: `internal/hooks/users_test.go`, `internal/store/users_test.go`
 
 **Interfaces:**
@@ -1588,15 +1642,15 @@ git commit -m "docs: document the superuser trust boundary and deployment harden
 Test names: `TestDeactivateBarsAuthentication`, `TestDeactivateRevokesSessions`, `TestDeactivatePreservesMemberships`, `TestFinalOwnerCannotDeactivate`, `TestFinalOwnerCannotDelete`, `TestFinalOwnerAllowedWhileGroupSuspended`, `TestReactivationSuperuserOnly`, `TestDeleteRemovesMembershipsAndInvitations`, `TestSelfUpdateFieldAllowlist`, `TestExceptionalOwnerRecovery`, `TestUserLifecycleAudit`, `TestRegistrationOpenAfterSlice3`, `TestGuestRegistrationCreatesNoGroup`, `TestRegistrationEmailUsesConfiguredSender`.
 
 Assertions:
-- Deactivation sets `disabled=true`, rotates `tokenKey`, and leaves memberships and invitations intact; a password login fails with `401`, and a token minted before deactivation fails on its next use.
-- Deactivation or deletion returns `409` when the user is the only active owner of any active or pending-retirement group, and succeeds with another active owner or while that group is suspended.
-- Reactivation is superuser-only, clears `disabled`, and leaves memberships intact; the user signs in again.
-- Deletion removes the user, every membership, and every pending invitation, and is rejected by the final-owner guard.
-- A self-update may change name, email, password, or set `disabled=true`; it may not set `disabled=false`, change another user, or change role-bearing relations.
-- Exceptional recovery promotes an existing member or adds an existing user as owner only while the group is suspended, and writes `owner_recovered` with the operator as actor.
+- Deactivation sets `disabled=true`, rotates `tokenKey`, and leaves memberships and invitations intact. A password login then fails with `401`, and a token minted before deactivation fails on its next use.
+- Deactivation or deletion returns `409` when the user is the only active owner of any active or pending-retirement group. It succeeds with another active owner or while that group is suspended.
+- Reactivation is superuser-only, clears `disabled`, and leaves memberships intact. The user signs in again.
+- A user delete deletes the user record, every membership, and every pending invitation. The final-owner guard rejects it when the user is the last active owner.
+- A self-update may change the name, email, or password, or set `disabled=true`. It may not set `disabled=false`, change another user, or change role-bearing relations.
+- Exceptional recovery promotes an existing member or adds an existing user as owner only while the group is suspended. It writes `owner_recovered` with the operator as actor.
 - Every transition writes its audit event in the same transaction and never stores a password, hash, or token.
-- Guest registration is open only after this task; a new user has `disabled=false`, no membership, and no group.
-- The verification email uses the sender from `app.Settings().Meta`; the test fails if the sender is the placeholder `no-reply@example.com`.
+- Guest registration is open only after this task. A new user has `disabled=false`, no membership, and no group.
+- The verification email uses the sender from `app.Settings().Meta`. The test fails if the sender is the placeholder `no-reply@example.com`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1605,7 +1659,9 @@ Expected: FAIL because the users hook and store methods do not exist.
 
 - [ ] **Step 3: Implement the lifecycle**
 
-Bind `OnRecordUpdateRequest` and `OnRecordDeleteRequest` for `users`. Validate the actor (self or superuser for deactivation and deletion, superuser for reactivation), run the final-owner query inside the same transaction, call `RefreshTokenKey()` on deactivation, and write the audit event. Bind `OnRecordCreateRequest` for guest registration so it never grants a group, and open `users.createRule` in this task only after SMTP and the edge rate limit exist. Emit `user_password_changed` when the request body carries a password change. The self-update allowlist is exactly `name`, `email`, `password`, and `disabled` (true only); reject `verified`, `tokenKey`, `emailVisibility`, relations, and `disabled=false`. Resolve the verification sender from `app.Settings().Meta` at send time and never hardcode an address. Add the exceptional-recovery path through `group_memberships` creation or promotion, gated on `groups.status=suspended`.
+Bind `OnRecordUpdateRequest` and `OnRecordDeleteRequest` for `users`. Verify the actor: self or superuser for deactivation and deletion, superuser for reactivation. Run the final-owner query inside the same transaction. Call `RefreshTokenKey()` on deactivation and write the audit event. Bind `OnRecordCreateRequest` for guest registration so it never grants a group. Open `users.createRule` in this task only after SMTP and the edge rate limit exist. Emit `user_password_changed` when the request body carries a password change.
+
+The self-update allowlist is exactly `name`, `email`, `password`, and `disabled` (true only). Reject `verified`, `tokenKey`, `emailVisibility`, relations, and `disabled=false`. Resolve the verification sender from `app.Settings().Meta` at send time. Never hardcode an address. Add the exceptional-recovery path through `group_memberships` creation or promotion, gated on `groups.status=suspended`.
 
 Write `manage-accounts.md` covering registration and SMTP, deactivation and sign-out, reactivation, deletion, final-owner rules, and exceptional recovery.
 
@@ -1653,7 +1709,7 @@ Assertions:
 - A second concurrent `Try` returns false and emits `united.cleanup.skipped{outcome="overlap"}`.
 - Shutdown stops new items and lets the in-flight item finish.
 - `retention-cleanup` is registered as `*/15 * * * *`, `orphan-reconciliation` as `17 3 * * *`, and `integrity-scan` as `37 4 * * *`.
-- No catch-up run starts at boot for cleanup or reconciliation; the integrity scan has its own run shortly after serve.
+- No catch-up run starts at boot for cleanup or reconciliation. The integrity scan has its own run shortly after serve.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1691,8 +1747,8 @@ Test names: `TestPurgeBeforeRetention`, `TestBatchLimits`, `TestBudgetStops`, `T
 
 Assertions:
 - Group purge runs before version retention.
-- At most 10 groups and 1,000 versions per run; the 60-second budget stops the phase.
-- Oldest `non_current_at` first; the summary reports remaining.
+- At most 10 groups and 1,000 versions per run. The 60-second budget stops the phase.
+- Oldest `non_current_at` first. The summary reports the remaining count.
 - A restoration or policy extension committed before the recheck prevents removal.
 - Removing a tombstoned state's current version clears the pointer, writes the permanent audit event, and sets `purged` when the last version goes.
 - Group purge cascades and writes the retired marker and audit atomically.
@@ -1734,10 +1790,10 @@ Test names: `TestOrphanAgeGuard`, `TestOrphanPrefixOnly`, `TestOrphanCommittedSe
 Assertions:
 - Only objects older than 24 hours under the `state_versions` prefix are candidates.
 - The committed set is `collectionId/recordId/storedFilename`.
-- The committed set is built in pages; the scan never holds more than one page of version rows in memory.
+- The committed set is built in pages. The scan never holds more than one page of version rows in memory.
 - Deleting an absent key succeeds.
 - Candidates above `max(100, 5% of listed)` abort with an error event and no deletes.
-- Only `cleanup --orphans --force` clears the brake; the next cron tick does not.
+- Only `cleanup --orphans --force` clears the brake. The next cron tick does not.
 - Local disk and LocalStack produce the same outcome.
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1747,7 +1803,7 @@ Expected: FAIL because reconciliation does not exist.
 
 - [ ] **Step 3: Implement reconciliation**
 
-Open one `app.NewFilesystem()` and `defer fs.Close()`; do not open a handle per key. Use `List(collection.Id + "/")` and `Delete(key)`. Build the committed set by paging `state_versions` in batches (for example 1,000 records per page) instead of loading every version at once, and hold only the `collectionId/recordId/storedFilename` strings. Emit the run summary and brake event.
+Open one `app.NewFilesystem()` and `defer fs.Close()`. Do not open a handle per key. Use `List(collection.Id + "/")` and `Delete(key)`. Build the committed set by paging `state_versions` in batches (for example 1,000 records per page) instead of loading every version at once. Hold only the `collectionId/recordId/storedFilename` strings. Emit the run summary and brake event.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1765,7 +1821,7 @@ git commit -m "feat(jobs): add orphan reconciliation with a mass-deletion brake"
 
 **Files:**
 - Create: `internal/jobs/integrity.go`
-- Modify: `internal/jobs/jobs.go`
+- Change: `internal/jobs/jobs.go`
 - Test: `internal/jobs/integrity_test.go`
 
 **Interfaces:**
@@ -1776,11 +1832,11 @@ git commit -m "feat(jobs): add orphan reconciliation with a mass-deletion brake"
 Test names: `TestIntegrityChecksCurrentOnly`, `TestIntegrityReportsMissing`, `TestIntegrityReportsDecrypt`, `TestIntegrityReportsLength`, `TestIntegrityReportsDigest`, `TestIntegrityNeverMutates`, `TestIntegrityScheduled`, `TestIntegrityRunsAfterServe`, `TestIntegrityBatchLimit`, `TestIntegrityBudget`.
 
 Assertions:
-- Every active current version is checked; non-current versions are not.
+- Every active current version is checked. Non-current versions are not.
 - Missing, undecryptable, wrong-length, and wrong-digest cases emit `united.integrity_scan.failure` with the right class.
 - No metadata or file is changed on failure.
 - The run emits one summary and updates `united.integrity_scan.last_success_age`.
-- The scan checks at most 100 current versions per run and stops at a 60-second budget; the summary reports the remaining count, and the next run resumes from the oldest unchecked state.
+- The scan checks at most 100 current versions per run and stops at a 60-second budget. The summary reports the remaining count, and the next run resumes from the oldest unchecked state.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1789,7 +1845,7 @@ Expected: FAIL because the scan does not exist.
 
 - [ ] **Step 3: Implement the scan**
 
-Register `integrity-scan` in `jobs.go`. Page active logical states in batches of 100, decrypt and verify each current version, emit events and metrics, and never write. Stop at a 60-second budget and report the remaining count so the next run resumes from the oldest unchecked state. Open one filesystem handle for the run and `defer fs.Close()`. Run once shortly after `OnServe` and then on the cron schedule; a superuser can trigger it through `POST /api/crons/integrity-scan`, and the single-flight guard prevents overlap.
+Register `integrity-scan` in `jobs.go`. Page active logical states in batches of 100. Decrypt and verify each current version, emit events and metrics, and never write. Stop at a 60-second budget and report the remaining count, so the next run resumes from the oldest unchecked state. Open one filesystem handle for the run and `defer fs.Close()`. Run once shortly after `OnServe` and then on the cron schedule. A superuser can trigger it through `POST /api/crons/integrity-scan`, and the single-flight guard prevents overlap.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1813,7 +1869,7 @@ Slice gate: rekey, repair, verify, forced cleanup, `--actor`, stdout-only, the s
 
 **Files:**
 - Create: `internal/offline/root.go`
-- Modify: `cmd/united/main.go`
+- Change: `cmd/united/main.go`
 - Test: `internal/offline/root_test.go`
 
 **Interfaces:**
@@ -1844,7 +1900,7 @@ Expected: FAIL because the CLI does not exist.
 
 - [ ] **Step 3: Implement the skeleton**
 
-Add subcommands to `app.RootCmd` before `Execute`. `app.Execute()` bootstraps the app, so do not call `app.Bootstrap()` again; a second call re-fires every `OnBootstrap` hook. In each `RunE`, call `app.RunAllMigrations()`, then `wire.keyGate(app, cfg)` with `config.ModeCommand`, then the command body. Never call `apis.Serve` and never initialize telemetry.
+Add subcommands to `app.RootCmd` before `Execute`. `app.Execute()` bootstraps the app, so do not call `app.Bootstrap()` again. A second call re-fires every `OnBootstrap` hook. In each `RunE`, call `app.RunAllMigrations()`, then `wire.keyGate(app, cfg)` with `config.ModeCommand`, then the command body. Never call `apis.Serve` and never initialize telemetry.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1872,7 +1928,7 @@ git commit -m "feat(offline): add the offline command skeleton"
 Test names: `TestRekeyAllOrNothing`, `TestRekeyAdvancesGeneration`, `TestRekeyReencryptsSentinel`, `TestRekeyRejectsBadKeys`, `TestRekeyAudit`, `TestRepairOneGroup`, `TestRepairDoesNotAdvanceGeneration`, `TestRepairRefusesRetired`.
 
 Assertions:
-- Rekey re-wraps every non-retired group key, re-encrypts `system_settings.key_sentinel` under the new master key, advances `master_key_generation`, and audits the old and new generation in one transaction (ADR 0002).
+- Rekey re-wraps every non-retired group key and re-encrypts `system_settings.key_sentinel` under the new master key. It advances `master_key_generation` and audits the old and new generation in one transaction (ADR 0002).
 - Any failure rolls back all changes.
 - Malformed, wrong-length, or identical keys are rejected.
 - Repair targets one group, does not advance the generation, and audits.
@@ -1885,7 +1941,7 @@ Expected: FAIL because rekey does not exist.
 
 - [ ] **Step 3: Implement rekey and repair**
 
-Use `RunInTransaction`, `crypto.UnwrapGroupKey`/`WrapGroupKey`, and the audit catalog. Re-encrypt the sentinel with `crypto.NewSentinel` under the new key before committing. Record `actor_type=offline_operator`, `actor_id`, `details.host`, and `details.master_key_generation`; never key material.
+Use `RunInTransaction`, `crypto.UnwrapGroupKey`/`WrapGroupKey`, and the audit catalog. Re-encrypt the sentinel with `crypto.NewSentinel` under the new key before you commit. Record `actor_type=offline_operator`, `actor_id`, `details.host`, and `details.master_key_generation`. Never record key material.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1942,7 +1998,7 @@ git commit -m "feat(offline): add full-history verify and forced orphan cleanup"
 ### Task 5.4: Startup gate, backup pairing, and restore drill
 
 **Files:**
-- Modify: `internal/wire/wire.go`
+- Change: `internal/wire/wire.go`
 - Create: `tests/restore/drill.sh`, `docs/releases/v0.2.0.md` (draft)
 - Test: `internal/wire/keygate_test.go`, `tests/restore/drill.sh`
 
@@ -1960,7 +2016,7 @@ Assertions:
 - A second boot with the same key and generation starts.
 - A different generation or key refuses to start before listening.
 - A boot after a global rekey with the new key and generation starts, and with the old key refuses.
-- The restore drill restores the newest backup artifact the operator configured. With the built-in backup, that is the single PocketBase zip containing `data.db`, `auxiliary.db`, and `storage/`. With external snapshots, the drill proves the database and file snapshot are from the same point in time. It supplies the escrowed `UNITED_MASTER_KEY` and `UNITED_PB_ENCRYPTION`, runs `verify`, and runs the Terraform harness against the restored instance.
+- The restore drill restores the newest backup artifact that the operator configured. With the built-in backup, that artifact is the single PocketBase zip containing `data.db`, `auxiliary.db`, and `storage/`. With external snapshots, the drill proves that the database and the file snapshot are from the same point in time. It supplies the escrowed `UNITED_MASTER_KEY` and `UNITED_PB_ENCRYPTION`, runs `verify`, and runs the Terraform harness against the restored instance.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1969,7 +2025,15 @@ Expected: FAIL because the corrupt-sentinel, missing-sentinel-with-groups, confi
 
 - [ ] **Step 3: Implement the gate and drill**
 
-Implement the gate as `wire.keyGate(app, cfg) error`, called from `OnServe` before `e.Next()` (application migrations have run by then; `OnBootstrap` runs before they do) and from each offline command after `RunAllMigrations()`. On boot: load `system_settings`; if `key_sentinel` is empty and no group has a wrapped key, write the configured generation and `crypto.NewSentinel`, then start; if the sentinel is empty but wrapped keys exist, refuse; otherwise compare `master_key_generation` and `CheckSentinel` and refuse on either mismatch. The drill script documents both artifact modes and the full-history verify. It records which mode the deployment uses and fails if the restored database and state files are not from the same backup or snapshot. The escrowed `UNITED_MASTER_KEY` and `UNITED_PB_ENCRYPTION` are prerequisites; neither is stored inside the backup.
+Implement the gate as `wire.keyGate(app, cfg) error`. Call it from `OnServe` before `e.Next()`, because application migrations have run by then and `OnBootstrap` runs before they do. Call it from each offline command after `RunAllMigrations()`.
+
+On boot, load `system_settings` and apply these rules:
+
+1. If `key_sentinel` is empty and no group has a wrapped key, write the configured generation and `crypto.NewSentinel`, then start.
+2. If the sentinel is empty but wrapped keys exist, refuse.
+3. Otherwise, compare `master_key_generation` and `CheckSentinel`, and refuse on either mismatch.
+
+The drill script documents both artifact modes and the full-history verify. It records which mode the deployment uses and fails if the restored database and state files are not from the same backup or snapshot. The escrowed `UNITED_MASTER_KEY` and `UNITED_PB_ENCRYPTION` are prerequisites. Neither is stored inside the backup.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1993,12 +2057,12 @@ This is not a slice. After slice 5 passes, run the release-only gates and publis
 - [ ] Run the seven release-blocking security checks from #417.
 - [ ] Run the manual failure-injection suite and record every named case.
 - [ ] Run the restore drill against the newest backup artifact and record the result and the artifact mode.
-- [ ] Confirm the edge rate limits cover `/state/*` and `/api/collections/users/auth-*`, and that PocketBase's built-in limiter is enabled for `/api`.
-- [ ] Confirm the PocketBase superuser IP/CIDR allowlist is set and the `united superuser ips` recovery command is recorded.
-- [ ] Confirm `UNITED_PB_ENCRYPTION` is set, exactly 32 characters, and escrowed separately from `UNITED_MASTER_KEY`.
-- [ ] Confirm the Hugo build, markdownlint, internal links, and external links.
-- [ ] Confirm no plaintext state, credential secret, master key, `_params` secret, or `UNITED_PB_ENCRYPTION` value appears in the database, files, logs, or error bodies.
-- [ ] Confirm `/api` exposes only PocketBase built-ins and no custom route.
+- [ ] Verify the edge rate limits cover `/state/*` and `/api/collections/users/auth-*`, and that PocketBase's built-in limiter is enabled for `/api`.
+- [ ] Verify the PocketBase superuser IP/CIDR allowlist is set and the `united superuser ips` recovery command is recorded.
+- [ ] Verify `UNITED_PB_ENCRYPTION` is set, exactly 32 characters, and escrowed separately from `UNITED_MASTER_KEY`.
+- [ ] Verify the Hugo build, markdownlint, internal links, and external links.
+- [ ] Verify that no plaintext state, credential secret, master key, `_params` secret, or `UNITED_PB_ENCRYPTION` value appears in the database, files, logs, or error bodies.
+- [ ] Verify that `/api` exposes only PocketBase built-ins and no custom route.
 - [ ] Write `docs/releases/v0.2.0.md` with the acceptance record.
 - [ ] Tag `v0.2.0`, publish the image and GitHub Release, and deploy the docs site.
 - [ ] Close the map with the plan and release record linked.
@@ -2030,4 +2094,4 @@ This is not a slice. After slice 5 passes, run the release-only gates and publis
 
 ## Deferrals
 
-No soak gate, no dual-run, no feature flag, no server-side import, no S3 import, no penetration test, no offline docs bundle, no v0.1 docs, no in-app metrics listener, no status route, no in-app rate limiting beyond PocketBase's built-in `/api` limiter (the edge owns `/state/*` and the auth routes), no administration route beyond PocketBase collections, no custom storage interface, and no group or state attributes in metrics. The failure-injection suite stays manual until wired into the release. The restore drill runs separately. Documentation versioning and Pages deployment happen only at release.
+This release does not include a soak gate, dual-run, or feature flag. It does not include a server-side import, an S3 import, a penetration test, an offline docs bundle, or v0.1 docs. It does not include an in-app metrics listener, a status route, an administration route beyond PocketBase collections, or a custom storage interface. It adds no in-app rate limiting beyond PocketBase's built-in `/api` limiter, because the edge owns `/state/*` and the auth routes. It adds no group or state attributes in metrics. The failure-injection suite stays manual until it is wired into the release. The restore drill runs separately. Documentation versioning and Pages deployment happen only at release.
