@@ -15,7 +15,7 @@ require (
 	github.com/gin-contrib/requestid v1.0.10
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/validator/v10 v10.30.6
-	github.com/redis/go-redis/v9 v9.24.0
+	github.com/redis/go-redis/v9 v9.24.1
 	github.com/rs/zerolog v1.35.1
 	github.com/sethvargo/go-envconfig/v2 v2.0.0
 )
